@@ -13,8 +13,6 @@
 > Mentions of `Avorion_Mega_Stub.lua` are mostly from me. As it is a mega stub compacted from `Avorion Stubs` for ease of access with VS Code.
 > There may be other mentions to files or directories you do not own. This is normal. Mostly aimed at me (Stormbox). As I often use this codex for my own references.
 ---
-> This document will also mention MCP and Python content quite often. That is more aimed at myself (Stormbox). As I do run a local MCP server on an old PC which helps immensely when I'm scrounging through Avorion resources.
-> Python scripts I utilize to quickly help me find certain snippets, functions, etc. And it's very helpful with compiling mods and other stuff too.
 
 ## 📑 Table of Contents
 
@@ -1349,6 +1347,8 @@ This generalizes past this one library: any shared helper whose config is "pass 
 ### Loading screen tips can be hijacked, not extended
 
 The list of loading-screen hint text is hardcoded client-side (`LoadingScreenTipSelector.cpp`) with no Lua-exposed array to append to. You can't add *new* tips, but you can override the text of an *existing* vanilla tip via a `.po` localization override, which lets you slip in custom lore or an easter egg wherever the engine happens to roll that particular vanilla tip.
+
+> ⚠️ Untested: This has not been throughouly tested to prove it actually works.
 
 ### Sector material strength (balancing reference)
 
