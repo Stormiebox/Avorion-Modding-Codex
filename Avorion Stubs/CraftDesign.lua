@@ -1,0 +1,66 @@
+---@class CraftDesign
+CraftDesign = {
+
+	empty = true, -- [read-only] bool
+	numTurrets = nil, -- [read-only] Box getCoaxialTurretDesignBoundingBox(float
+
+}
+
+---@return CraftDesign
+function CraftDesign()
+	return CraftDesign
+end
+
+---@return BlockPlan
+function CraftDesign:getMovePlan()
+	return BlockPlan
+end
+
+---@param i number
+---@return TurretDesign
+function CraftDesign:getMoveTurret(i)
+	return TurretDesign
+end
+
+---@return BlockPlan
+function CraftDesign:getPlan()
+	return BlockPlan
+end
+
+---@param i number
+---@return TurretDesign
+function CraftDesign:getTurret(i)
+	return TurretDesign
+end
+
+---@return table<number, number>
+function CraftDesign:getTurrets()
+	return {0}
+end
+
+---@param plan BlockPlan
+---@return any @nothing
+function CraftDesign:setMovePlan(plan)
+	return nil
+end
+
+---@param i number
+---@param turret TurretDesign
+---@return any @nothing
+function CraftDesign:setMoveTurret(i, turret)
+	return nil
+end
+
+---@param plan BlockPlan
+---@return any @nothing
+function CraftDesign:setPlan(plan)
+	return nil
+end
+
+---@param i number
+---@param turret nil | TurretDesign
+---@return any @nothing
+function CraftDesign:setTurret(i, turret)
+	return nil
+end
+

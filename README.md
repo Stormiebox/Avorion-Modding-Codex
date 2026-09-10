@@ -1,10 +1,28 @@
-# Avorion Modding Codex
+# 🚀 Avorion Modding Codex
 
-[Avorion Modding Codex Wiki Page](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki/Avorion-Modding-Codex) 
+[Avorion Modding Codex Wiki Page](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki)
 
-This repository simply hosts the `Avorion Modding Codex Wiki` for Avorion modders to utilize for their own projects.
-It compiles a list of things I have learned throughout my journey modding Avorion. Especially with the `Cosmic Series` in Avorion.
+A practical, field-tested guide to Avorion's Lua modding API — written by a modder, for modders. It compiles hard-won lessons learned throughout Stormbox's own modding journey, especially across the **Cosmic Series** of Avorion mods.
 
-> Note: The document and wiki will be constantly updated as information is often fact checked with Avorion sources in the game assets itself or externally via community resources.
-> Keep in mind a lot of the information is already common sense for the most experienced Avorion modders. This document and Wiki are aimed towards those that are level entry or intermediate with modding Avorion.
-> Avorion Modding Codex is a compact version of my personal development notes that is up to 4700+ lines long and growing!
+**👉 Read the guide: [`Codex Main/Avorion_Modding_Codex.md`](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki/Avorion-Modding-Codex)**
+
+Aimed at novice-to-intermediate Avorion modders — if you already know Lua and want to understand *why* the engine behaves the way it does, this is for you.
+
+> [!NOTE]
+> The document and Wiki are updated continuously as information is fact-checked against Avorion's own game assets and community resources. A lot of it will already be common sense to the most experienced Avorion modders — but there's still plenty in here that took real, in-production bugs to uncover.
+
+## 📁 What's in this repository
+
+| Path | What it is |
+|---|---|
+| [`Codex Main/Avorion_Modding_Codex.md`](Codex%20Main/Avorion_Modding_Codex.md) | The Codex itself — start here. |
+| [`Miscallenous Documents/`](Miscallenous%20Documents/) | Supplementary write-ups on specific systems (e.g. how Avorion's in-game Mail system works). |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to propose an addition or correction — verification standards, format, PR process. |
+
+## 🤝 Contributing
+
+This project is open source and welcomes pull requests from the Avorion modding community — corrections, confirmations of the entries marked ⚠️ **Unverified**, and new findings of your own. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the ground rules.
+
+## 📄 License
+
+See the repository's `LICENSE` file for terms.

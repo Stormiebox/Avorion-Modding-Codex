@@ -1,17 +1,31 @@
 # 🚀 The Avorion Modding Codex
 
-## Author: Stormbox
+**A practical, field-tested guide to Avorion's Lua modding API — written by a modder, for modders.**
 
-*A practical field guide to Avorion's Lua scripting API — written for modders, by a modder, Stormbox (stormiebox), from hard-won lessons across the development of the **Cosmic** mod series (Cosmic Vault, Cosmic Overhaul, Cosmic War, Cosmic Chronicles, Cosmic Ascendancy, and Cosmic Starfall).*
+*By [Stormbox](https://github.com/Stormiebox) (stormiebox) — distilled from hands-on lessons across the **Cosmic** mod series (Cosmic Vault, Cosmic Overhaul, Cosmic War, Cosmic Chronicles, Cosmic Ascendancy, and Cosmic Starfall).*
+
+---
+
+### 🧭 Who this is for
+
+This Codex is aimed at **novice-to-intermediate Avorion modders** — if you can write basic Lua and want to understand *why* Avorion's engine behaves the way it does, this is for you. Experienced modders will find a lot of this to be common sense, but there are still deep-cut lessons in here that took real, in-production bugs to uncover.
+
+> [!TIP]
+> **New here? Start with [🏁 Start Here — Core Concepts](#-start-here--core-concepts)**, then [🧵 Execution Contexts](#-execution-contexts--who-runs-where). Those two sections cover the mental model almost everything else in this guide builds on. After that, jump around freely — each entry is written to stand on its own.
+
+### ✅ How every claim here is verified
+
+Every rule below is written as a standalone lesson: what the engine actually does, why it surprises people, and the pattern that works. Where a claim could be checked against the `Avorion Stubs` folder (the authoritative per-class API reference — see the [Appendix](#-appendix--engine-trivia--hard-limitations)) or the vanilla script source, it was. A handful of entries that could **not** be confirmed against any source are clearly marked ⚠️ **Unverified**, so you know to test before relying on them. Where an earlier version of this Codex got something wrong, you'll see a `> [!NOTE]` **Correction** callout instead of a silent edit — this is a living document, and the corrections are part of the record.
 
 > [!NOTE]
-> This is a *guide*. Every rule below is written as a standalone lesson — what the engine actually does, why it surprises people, and the pattern that works. Where a claim could be checked against the `Avorion Stubs` folder (the authoritative per-class API reference — see below) or the vanilla script source, it was; a handful of entries that could **not** be confirmed against any source are clearly marked ⚠️ **Unverified** so you know to test before relying on them.
----
-> Highly recommended to setup `Avorion Stubs` in your workspace. Alongside `Avorion Vanilla` resources like a copy of the game resources as well.
----
-> This version is a highly compacted version from my now 4738+ lines of development diary I had previously.
-> Mentions of `Avorion_Mega_Stub.lua` are mostly from me. As it is a mega stub compacted from `Avorion Stubs` for ease of access with VS Code.
-> There may be other mentions to files or directories you do not own. This is normal. Mostly aimed at me (Stormbox). As I often use this codex for my own references.
+> Setting up `Avorion Stubs` in your own workspace (the game's per-class Lua API reference) is highly recommended, alongside a copy of Avorion's own vanilla script resources. Both are referenced constantly throughout this guide.
+>
+> This document is a heavily compacted version of Stormbox's own development diary, which runs past 4,700 lines. A handful of entries may still reference personal tooling (like a retired single-file `Avorion_Mega_Stub.lua`) or files you won't have locally — that's normal, and called out inline wherever it matters.
+
+### 🤝 Contributing
+
+This Codex is open source and welcomes contributions from the wider Avorion modding community — found a mistake, confirmed one of the ⚠️ **Unverified** entries, or learned something worth sharing? See **[CONTRIBUTING.md](../CONTRIBUTING.md)** for how to propose an addition or correction.
+
 ---
 
 ## 📑 Table of Contents
@@ -84,7 +98,41 @@ Confirmed real case, `Cosmic Starfall`'s `complexCraft/complexCore.lua`: a modul
 
 **Rule:** in a `secure()`/`restore()` pair (or any function meant to populate module state from a parameter), the variable being assigned in `restore()` must be the *same* upvalue every other function in the file reads — write `x = ...`, not `local x = ...`, whenever `x` already exists as a module-scope local. If you genuinely want a new function-scoped temporary, give it a visibly different name so a reviewer (or you, in six months) doesn't mistake it for the outer variable at a glance.
 
+### 7. Escaping an apostrophe inside a single-quoted string is a backslash, not a doubled quote
+
+Another universal Lua gotcha, not Avorion-specific, but one that's easy to get wrong on autopilot if you've spent time in SQL (where doubling a quote is the correct escape). In Lua, doubling the quote does **not** escape it — it closes the string early and opens an immediately-adjacent second string literal, which is a syntax error (two string literals with no operator between them):
+
+```lua
+-- WRONG: closes the string after "faction", then "s next move...'" is a second,
+-- illegal literal butted up against the first with nothing joining them
+'...rival''s next move...'
+
+-- CORRECT: backslash-escape the apostrophe
+'...rival\'s next move...'
+```
+
+This bites hardest in codex/UI text strings, which are exactly the kind of long, prose-heavy, apostrophe-containing content most likely to need it — and a full-file syntax error there fails the whole script, not just the one string.
+
+### 8. `getEntitiesByType()` and friends return multiple values, not a table — wrap the call in `{}`
+
+`Sector:getEntitiesByType(type)`, `getEntitiesByFaction()`, and similar plural-sounding API calls are documented as returning "multiple return values," not a Lua table. Assigning the bare call to a single local only keeps the *first* result:
+
+```lua
+-- WRONG: with exactly one match, targetStation is a bare Entity (userdata), not a table
+local targetStation = Sector():getEntitiesByType(EntityType.Station)
+if #targetStation == 0 then ... end -- crashes: "attempt to get length of a userdata value"
+
+-- CORRECT: {} collects every returned value into a real table, and an empty table
+-- (rather than a userdata or nil) is the correct "no matches" signal to check for
+local targetStation = {Sector():getEntitiesByType(EntityType.Station)}
+if #targetStation == 0 then ... end
+```
+
+This exact defect (`cw_stationsiege.lua`, Cosmic War) shipped for a full point release before being caught, specifically *because* it only breaks visibly when the match count is exactly one — with zero or multiple matches the unwrapped call still happens to behave plausibly enough in casual testing.
+
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 🧵 Execution Contexts — Who Runs Where
 
@@ -99,6 +147,18 @@ Avorion strictly separates where code executes, and mixing these up is the singl
 | **Sector** | Only while loaded | Suspended entirely when no players/alliances present |
 | **Entity** | Only while its sector is loaded | Attached scripts run alongside the sector |
 | **Client / Player** | Per connected player | Runs UI and rendering-adjacent logic |
+
+### `update(timeStep)` is a real, third tick callback — not exclusive to `Galaxy()` scripts
+
+`data/scripts/entity/stationscripttemplate.lua` — the engine's own official template for any station/ship/entity script — documents three separate, simultaneously-valid per-tick lifecycle callbacks side by side:
+
+- `update(timeStep)` — called every tick, on **both** client and server (one shared function, one shared call site)
+- `updateClient(timeStep)` — called every tick, client only
+- `updateServer(timeStep)` — called every tick, server only
+
+It's easy to assume `update()` (no suffix) is only a `Galaxy()`-script thing, since `data/scripts/galaxy/server.lua` uses it and Galaxy has no client/server split to name explicitly. That's one valid use of it, not the only one — the template above proves it's a general entity/sector/player-script hook too. Vanilla's own `lib/structuredmission.lua` defines all three simultaneously on a **player**-attached script, each dispatching to a different subset of `mission.currentPhase`/`mission.globalPhase` handlers depending on which side needs the logic.
+
+A script that defines only `update()` and internally guards with `if not onServer() then return end` (or the `onClient()` mirror) is a normal, working pattern — not a missing/misnamed `updateServer()`. Don't flag it as dead code without first checking whether the attached context is Galaxy-only (where `update()` really is the only option) or one of the entity/sector/player contexts where the engine calls whichever of the three names the script actually defines.
 
 ### `Sector()` doesn't exist outside a sector thread
 
@@ -187,6 +247,8 @@ Avorion doesn't generate the whole galaxy up front. On a new save there are no p
 This isn't just about *new* factions born after your mod is already running — it's the same failure mode as a mod being **installed mid-playthrough**, onto a save where plenty of factions already exist. A one-time "generate my custom faction data" pass that only runs at your mod's own `initialize()` never revisits factions that existed before that pass ran, or that get created afterward through a code path you didn't anticipate. See "🔄 Self-Healing Systems" below for the general pattern (periodic reconciliation instead of a one-shot pass) and a real case study of exactly this happening.
 
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 📦 The Virtual File System — `include()`, Overrides & Namespaces
 
@@ -280,9 +342,9 @@ Neither of those two files is actually missing from the mod's real source — `c
 
 > [!NOTE]
 > **Correction:** An earlier revision of this entry concluded, after seeing this signature on two separate machines, that the cause was necessarily a corrupted/partial Steam Workshop download on the reporting player's end, and told modders to stop there. That conclusion was **falsified** by a third occurrence: the same reporting player's server hit the identical error again, on the identical two files, after Steam file-integrity verification, a full mod reinstall, and unsubscribing every conflicting third-party mod — a sequence that should defeat any ordinary corrupted-cache theory. Both failing scripts share a trait a corrupted-download explanation doesn't need to account for: they're not loaded from the initial galaxy/server bootstrap list, but attached **dynamically at runtime** — `cosmicbuff.lua` via `entity:addScript(...)` from `cosmicvaultbuffs.lua`, `cv_weather_ui.lua` via `player:addScriptOnce(...)` from `cv_weather_controller.lua` — while scripts that *are* part of the initial bootstrap (e.g. `cosmicvaultnews_server.lua`) load cleanly in the same sessions. Whether `include()`'s vanilla/mod-folder fallback behaves differently for a script attached this way, versus one loaded at initial VFS construction, is not yet confirmed against any documented engine behavior — flagging it here as the live open question rather than asserting a mechanism that hasn't been verified.
----
+
 > **Rule:** don't stop at "the file exists in my shipped source, so it must be the player's environment" — that explanation must survive a controlled retest (clean reinstall) before you treat it as the diagnosis. If it doesn't survive, the next thing to check is what's structurally different about *how* the failing script gets loaded (bootstrap-list vs. dynamically `addScript()`/`addScriptOnce()`-attached) rather than assuming file corruption a second time.
----
+
 > [!NOTE]
 > **New evidence (still doesn't confirm the mechanism, but narrows it):** the same reporting player hit the identical `cosmicbuff.lua:110` failure a fourth and fifth time, and this time the logs showed the shape of the problem more clearly: once `include("callable")` fails for a given server session, it does not self-heal — every subsequent `entity:addScript("data/scripts/entity/cosmicbuff.lua", ...)` attempt for the rest of that session fails identically, with no successful attach ever recorded afterward. One log showed 280 repeats of the exact same crash line in under 4 minutes.
 >
@@ -300,13 +362,15 @@ If you append content to a vanilla file (e.g. adding entries to `data/scripts/li
 
 ---
 
+[⬆ Back to top](#-table-of-contents)
+
 ## 📊 The Stat Modifier System
 
 This is the part of the API with the worst naming in the entire engine. Get comfortable with the underlying equation and the four functions stop being confusing.
 
 ### The equation
 
-```LUA
+```
 Final = (Base + Sum(MultiplyableBias)) × (1 + Sum(BaseMultiplier)) × Product(Multiplier) + Sum(AbsoluteBias)
 ```
 
@@ -379,6 +443,8 @@ Writing `entity.shieldMaxDurability = 50000` looks like it works — until the s
 
 ---
 
+[⬆ Back to top](#-table-of-contents)
+
 ## 🎯 Entities, Components & Combat
 
 ### Component wrappers: `Shield(id)`, `Durability(id)`, `Hangar(id)`, `Weapons(id)` are all real
@@ -397,6 +463,25 @@ end
 - **A wrong `inflictDamage` argument order.** The real signature is `(damage, damageSource, damageType, inflictorId, ...)` — mixing up the order (or passing a raw type number where a `DamageSource`/`DamageType` enum is expected) fails silently or hangs the engine.
 
 Similarly, `.prefix` doesn't exist directly on a turret `Entity` — the text prefix lives on the `Weapons` component: `Weapons(turretEntity).weaponPrefix`. And there is no `entity:getWeapons()` on the raw entity wrapper either — go through the component: `Weapons(entity.id):getWeapons()`.
+
+### `onRemove()` is not "the entity was destroyed" — that's `onDelete()`
+
+These two script-lifecycle callbacks sound interchangeable and aren't. Per the engine's own doc text (`EntityFunctions.html`, and the matching entries under `PlayerFunctions.html`/`SectorFunctions.html`):
+
+- **`onRemove()`** — "Called when the script is about to be removed from the object, before the removal." This fires when *the script itself* is detached (e.g. an explicit `removeScript()` call) while the object it's attached to keeps existing.
+- **`onDelete()`** — "Called when the script is about to be deleted from the object, before the deletion. This is the last call that will be done to an object script. This function is also called when the object it is attached to is deleted."
+
+If you need to clean up an entry this script owns in some *other* shared/persistent registry (a galaxy-level table, a global database key, an external tracking list) once the entity is gone for good — sold isn't the concern, actual destruction is — hook `onDelete()`, not `onRemove()`. Vanilla's own `entity/utility/jumprangeboost.lua` does exactly this correctly:
+
+```lua
+-- CORRECT (vanilla precedent): cleans up on actual entity deletion
+function JumpRangeBoost.onDelete()
+    Sector():removeStaticHyperspaceGlow(JumpRangeBoost.entityId)
+    removeShipProblem("HSJumpRangeBoost", JumpRangeBoost.entityId)
+end
+```
+
+A script that only overrides `onRemove()` for this purpose will work fine in manual testing (removing the script, or even scrapping via a UI action that happens to detach the script first) but silently never fire for the much more common real-world case — the entity being destroyed outright (combat loss, demolished, etc.) — leaving a permanent stale/"ghost" entry in whatever it was supposed to clean up. Confirmed as a live bug in Cosmic Overhaul's `entity/merchants/factory.lua`: its Factory Overview registry unregister call was wired to `onRemove()` only, so a factory destroyed in combat never left the tracked-factories list, showing frozen last-known data forever. If you're not certain live `Entity()`/`Faction()` context is still safe to read this late in the lifecycle (jumprangeboost.lua's use of a pre-cached `.entityId` rather than a fresh `Entity()` call is a hint that it might not always be), cache the identity you'll need earlier (e.g. during your normal periodic update) and fall back to it in `onDelete()` rather than trusting a fresh lookup unconditionally.
 
 ### `entity.damageMultiplier` is real, but doesn't reliably move the needle on DPS
 
@@ -561,7 +646,15 @@ local spawnPos = matrix.translation + vec3(100, 0, 0)
 
 If you register a custom sector template into the generator pool, it **must** export `function contents(x, y)` at minimum (even if it just returns an empty table), or a vanilla background script that expects that shape — like the respawn/defender logic — crashes with `attempt to call field 'contents' (a nil value)` the first time it touches your template.
 
+### Boarding isn't a station-only, invasion-only system
+
+It's easy to assume boarding only exists as the vanilla station-invasion cinematic (troop transports grinding down a *station's* shields before capturing it), since that's the only place most modders see it in action. The API doesn't actually say that. `AIState.Boarding` is a genuine `ShipAI` order state — vanilla's own `entity/orderchain.lua` (`OrderChain.boardingOrderFinished`) handles it exactly like any other order in the fleet-order chain (`Attack`, `RepairTarget`, `FlyThroughWormhole`, ...), finishing when the `ShipAI` leaves that state. And the `Boarding` component itself (`Boarding.lua`) is generic: `boardable` (a settable bool), `applyBoardingSuccessful(attackingFaction)`, `getBoarders()`, `getBoarderPower()`/`getDefenderPower()`, etc. carry no `EntityType` restriction anywhere in their signatures or docs.
+
+Confirmed from the stubs and vanilla source: the component and the order state are not hardcoded to `EntityType.Station`. **Not yet independently verified:** whether the underlying C++ implementation actually resolves a full boarding fight against a `Ship`-type target the same way it does for a `Station` (i.e. whether a Lua script ordering a `Boarding` state against a ship, then calling `applyBoardingSuccessful`, produces a real in-game capture) — that would need an actual in-sector test, not just a stub read. Treat "ship-to-ship capture" as plausible-and-worth-prototyping, not confirmed-working, until someone tests it live.
+
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 🖥️ UI Development
 
@@ -604,9 +697,45 @@ The `%_t` / `%_T` translation metatable only exists in the client-side Lua envir
 >
 > ⚠️ **Unverified — does "called unconditionally from module scope" actually defer past the dangerous window, or only genuine later-execution (e.g. from `initialize()`) does?** `Cosmic Starfall`'s `lib/Stations.lua` wraps its `%_t` calls in a `local function _buildStationText() ... end` and then calls that function immediately, unconditionally, on the very next line — still at module load time, just one stack frame deeper than an inline assignment. This differs from the `if onClient()`-wrap and from-`initialize()` patterns confirmed safe above, and from the correction's own emphasis that the danger is about *when* a line executes relative to the server's "initial script evaluation phase," not really about lexical function-scope alone. Whether merely being inside a function call — as opposed to genuinely being deferred to a later engine phase — is sufficient could not be confirmed by static analysis or by this mod's own shipped behavior (no crash reports on file, but absence of a report isn't proof either). If you need this exact shape (a value needed on both sides that also uses `%_t`), verify on a real dedicated server before trusting it, or prefer the confirmed-safe `initialize()`-deferral pattern instead.
 
+### `NamedFormat` always needs its table argument, even an empty one
+
+`NamedFormat(string, MapType)` (see the stub) takes two required arguments: the `%_T`-deferred format string, and a table of named substitution values for any `${...}` placeholders in it. Every vanilla call site passes that table — `NamedFormat("Shipyard"%_t, {})` in `sectorspecifics.lua`, `NamedFormat("${faction} Headquarters"%_T, {faction = faction.baseName})` in `reinforcementstransmitter.lua`/`equipmentmerchantcaller.lua` — including the plain-string cases with no placeholders to fill, which still pass `{}` rather than omitting the argument.
+
+Calling it with only the string (`NamedFormat("Trade Rumor..."%_T)`) fails with `Error constructing NamedFormat: not enough arguments, expected a value of type 'table' at stack position 3`, logged server-side every time that line runs. This is a **soft failure, not a hard Lua error** — confirmed by a live case where the rest of the calling function kept running normally afterward (a payment, a sector lookup, and a follow-up chat message with correctly-computed values all completed on the same call), so don't assume everything after the bad `NamedFormat(...)` call was skipped just because an error was logged. What's actually lost is narrower: whatever value the construction was supposed to produce — here, `view.note` — never gets its intended content, since the call that would have built it failed. Always pass a table, `{}` at minimum, even when the string has no `${...}` placeholders.
+
 ### UI elements must be instantiated at load, not on demand
 
 `PlayerWindow():createTab()` has to run inside the specific UI script's `initialize()` — you cannot create it later in response to an async event or a data callback; that either fails to render or conflicts with other mods' menus. Inject the script via `player:addScriptOnce("player/ui/myscript.lua")` from a central injector (typically `player/init.lua`), and let the engine natively fire `initialize()` client-side. You can toggle *visibility* later — the physical UI elements just have to exist from the start.
+
+### `ScriptUI()` needs `initUI()`, not `initialize()`
+
+`ScriptUI():registerInteraction()`, `:createWindow()`, `:registerWindow()` — anything that sets up an entity's player-facing interaction — belongs in a dedicated `initUI()` function, a separate engine-invoked lifecycle callback the engine calls automatically alongside `initialize()`, never inside `initialize()` itself. `ScriptUI` isn't bound yet during `initialize()`; calling it there crashes with `attempt to call global 'ScriptUI' (a nil value)`.
+
+```lua
+-- WRONG: crashes the instant this entity initializes, server-side
+function MyShip.initialize(factionIndex)
+    if onServer() then
+        MyShip.factionIndex = factionIndex
+        ScriptUI():registerInteraction("Pay the Toll"%_t, "payToll")
+    end
+end
+
+-- CORRECT: ScriptUI setup moves to its own lifecycle callback
+function MyShip.initialize(factionIndex)
+    if onServer() then
+        MyShip.factionIndex = factionIndex
+    end
+end
+
+function MyShip.initUI()
+    ScriptUI():registerInteraction("Pay the Toll"%_t, "payToll")
+end
+```
+
+Every vanilla entity script that registers an interaction does it this way — `civilship.lua`, `crewtransport.lua`, `bulletinboard.lua`, `beacon.lua`, `cargostash.lua`, and dozens more, with zero exceptions found. `Cosmic Vault`'s own `cosmicvaultstation.lua` (`CosmicVaultStation.injectInteraction()`) confirms the mechanism directly in its own comment: *"Avorion automatically scans all scripts on an entity for 'interactionPossible' and 'initUI' methods."* — it works by capturing and wrapping the calling script's own `initUI` global rather than calling `ScriptUI()` itself, deferring the real call to when the engine actually invokes it.
+
+> [!WARNING]
+> **Confirmed real case.** `Cosmic War`'s v4.0.0 pass shipped this exact mistake in two new files, `cw_checkpoint_picket.lua` and `cw_defector_ship.lua` — both copy-pasted the same wrong shape into `initialize()`. Caught by the `cw_checkpoint_picket.lua` crash showing up in a live server log during playtesting; a same-pattern grep across the whole mod (and the rest of the Cosmic suite) then found the second instance in `cw_defector_ship.lua` before it ever shipped. Both fixed by moving the `ScriptUI():registerInteraction()` call into a new `initUI()` function.
 
 ### `Player():getValue()` / `setValue()` are server-only — never call them from the client
 
@@ -652,6 +781,25 @@ Because each Lua VM is fully isolated, that `clientCache` table only exists insi
 > [!NOTE]
 > `Server():getValue()`/`setValue()` **are** safe to call from server-side player scripts (`data/scripts/player/*.lua` executing on the server). The danger is specifically `Player():getValue()` called from a client-only context.
 
+### A serialized-string custom value needs its own server-side cache, or every read re-parses it
+
+Custom values (`Server():setValue()`/`getValue()`, and the entity/faction/player equivalents) only ever store primitives — there's no native table type. Any mod that needs to persist a *collection* (a list of active sieges, a set of contested zones, a per-pair scoreboard) ends up hand-rolling a delimiter-based serializer (`table.concat`/`string.split` over `;`/`,`/`|`) and storing the result as one string value. That's the correct, necessary workaround for the primitives-only constraint — the trap is on the *read* side, not the write side: a getter that deserializes the whole string fresh on every single call has no caching layer at all, so its cost scales with however often something calls the getter, not with how often the underlying data actually changes.
+
+Confirmed in Cosmic Vault's `cosmicvaultterritory.lua`: `CosmicVaultTerritory.getContestedZones()` runs a full `string.split` + per-entry parse over its serialized zone list on every call, with no module-local cache and no dirty-tracking — and Cosmic War's `cw_battlefieldhud.lua` calls it once per player on every single `onSectorEntered`, plus once more on client `initialize()`. On a server with several concurrent contested zones and players jumping frequently, that's a full re-parse triggered by routine sector travel, not by the data changing.
+
+> **Rule:** if a getter deserializes a custom-value string, and anything calls that getter more often than the underlying value actually changes (a UI refresh, a per-player-per-event hook, anything on a `getUpdateInterval` tick), keep a module-local Lua table as the real cache and only re-run the parse when the setter actually writes a new string — or better, have the setter update the module-local cache directly and skip the round-trip through the string entirely for reads that happen in the same VM. Reserve the string exists purely for what genuinely needs to survive a save/reload or cross a VM boundary; nothing else should ever pay the parse cost.
+
+### A `double`-typed engine property serialized into a delimited string breaks an integer-only parse pattern
+
+Building the same hand-rolled serializer the entry above describes, a value pulled straight from a `double`-typed engine property (`Server().unpausedRuntime`, any `getRelations()`/War-Heat-style float) and passed through `tostring()` does **not** reliably render as a clean, `%d+`-parseable integer — Lua's default number-to-string conversion picks whichever form is shortest/most natural for the actual value, and that form depends on magnitude, not on what the value conceptually represents:
+
+- **Near zero:** renders in scientific notation (`1.2e-005`). A parse pattern anchored on `%d+` for that field stops at the `e`, silently mis-reading the value rather than failing loudly.
+- **Anywhere else (the far more common case for something like `unpausedRuntime`, which only ever grows):** renders with a decimal point (`48291.734`). A parse pattern using `%d+` for that field doesn't match the `.` at all, so the entire anchored pattern fails and the whole read returns nothing — not just that one field.
+
+Both are the same root mistake — assuming `tostring()` of a `double` produces something an integer-only regex can consume — surfacing as two different failure shapes depending on the value's magnitude. Confirmed twice independently in this codebase: `cosmicwarbridge.lua`'s War Heat snapshot (`publishWarHeatSnapshot`/`getWarHeatSnapshot`) hit the scientific-notation case for a heat value near zero, silently misreading it as maximum heat; `cosmicwarbridge.lua`'s Occupation marker (`getOccupationData`, storing `oldFactionIndex,newFactionIndex,endTime` with `endTime` derived from `unpausedRuntime + 21600`) hit the decimal-point case, and because the parse pattern anchored the whole three-field match with `^...$`, one bad field silently broke the read of the other two as well — the entire mechanic gated on this function was inert from the moment it shipped, with no error anywhere.
+
+> **Rule:** before storing a `double`-typed value inside a delimited string meant for later regex parsing, either (a) `math.floor()`/`math.ceil()` it first if sub-integer precision was never meaningful for that field (a 6-hour expiry timestamp doesn't need sub-second precision), or (b) format it explicitly with `string.format("%.Nf", value)` and write a parse pattern that actually accounts for the decimal point (`%-?%d+%.?%d*`), the same fix already applied to the War Heat snapshot. Don't rely on plain `tostring()` producing a shape your parser happens to expect — check the property's documented type in the API stubs (`-- double` vs `-- int`) before assuming either.
+
 ### Visual effects (`createExplosion`, `createGlow`) are client-only
 
 `Sector():createExplosion(...)` and `Sector():createGlow(...)` throw a fatal exception if called from a server-side event script — which also aborts any subsequent logic in that same call (loot drops, entity deletion, etc. never run). Route visual effects to the client with `broadcastInvokeClientFunction(...)`, adding a global wrapper function for the RPC hook if the script isn't namespaced.
@@ -661,6 +809,25 @@ Because each Lua VM is fully isolated, that `clientCache` table only exists insi
 The engine natively intercepts `Escape` to force-close every active UI frame, with priority over any Lua callback — so if you let players bind "Clear Keybind" to `Escape`, the whole menu just vanishes the instant they press it instead. Reserve `KeyboardKey.Delete`/`Backspace` for "clear" actions, and block `Escape` from being assignable as a custom keybind at all.
 
 > ⚠️ **Unverified:** a commonly repeated claim in Avorion modding notes is that `onKeyPress` fires even while the player is typing in chat or a coordinate field, and that a function called `checkInputFocus()` exists to guard against it. **No such function appears anywhere in `Avorion Stubs/` or the vanilla script source** — it could not be confirmed. If your hotkey handler is firing while the player is typing, don't assume `checkInputFocus()` is the fix; test what vanilla actually does in that situation before shipping a workaround built on an unconfirmed API.
+
+### `onPostRenderHud`/`onPreRenderHud` are event callbacks — defining the function isn't enough
+
+`initialize()`, `updateClient()`, `updateServer()` and a handful of others are lifecycle hooks the engine calls on every script automatically, just because the function exists on the namespace (or global scope). `onPostRenderHud`/`onPreRenderHud` are not in that set — they're **event callbacks**, the same family as `onSectorChanged`/`onShowWindow`, and they only fire once you've explicitly told the engine to route them:
+
+```lua
+function MyTab.initialize()
+    Player():registerCallback("onPostRenderHud", "onPostRenderHud")
+    -- ... build the tab ...
+end
+
+function MyTab.onPostRenderHud(state)
+    -- runs every client frame, after the HUD renders -- but only now that it's registered
+end
+```
+
+Confirmed against vanilla's own `structuredmission.lua`, which registers all six of its per-frame UI hooks the same way inside its client `initialize()` block (`onSectorChanged`, `onConfirmSectorArrival`, `onStartDialog`, `onPostRenderIndicators`, `onPostRenderHud`, `onPreRenderHud`), and matches how every existing Cosmic mod hotkey (Cosmic Vault's Cosmic Codex, Cosmic Overhaul's Bulletin Board and Resource Display) already does it.
+
+**The failure mode is silent, not a crash.** A tab built without this line compiles clean, the linter has nothing to flag, and the tab itself works perfectly when opened normally — the hotkey handler is just dead code the engine never calls. Caught only by actually pressing the bound key in-game and noticing nothing happens; nothing in the file itself looks wrong.
 
 ### Scrollbars
 
@@ -685,6 +852,8 @@ There is no `getJumpDestination()` anywhere on `Player`, `ShipAI`, or `Hyperspac
 > **Rule:** before wrapping a shared library call in your own server→client relay, check whether the library function's *own* first line already guards on `onServer()`/`onClient()` and does the relay itself. If it does, call it directly from server-side code — layering a second relay on top doesn't compound the effect, it just means the inner call executes on the wrong side of the boundary and no-ops. This is the mirror image of the three-layer client-cache pattern documented earlier in this section: that pattern is correct when *you* own both ends of the sync; it's wrong to reimplement when the library you're calling already owns both ends itself.
 
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 🌐 Multiplayer, Networking & Determinism
 
@@ -791,6 +960,8 @@ If a debug function is genuinely meant to never ship live, don't rely on a flag 
 
 ---
 
+[⬆ Back to top](#-table-of-contents)
+
 ## 🏛️ Factions, Alliances & Diplomacy
 
 ### Reading and paying resources
@@ -884,11 +1055,75 @@ local item = buyer:getInventory():find(index)
 
 The base `Faction` object can't run scripts. See "Entities, Components & Combat" above for the recast pattern.
 
+### Per-actor state can land on either the Player or their Alliance — a later reader must check both
+
+When a script attaches or updates state on "whichever faction actually performed the action" (a kill, a purchase, any attributable event), the real holder is decided by the *acting entity's* `factionIndex` at that moment, via the same `isPlayer`/`isAlliance` recast covered above — not by some identity you can assume ahead of time:
+
+```lua
+-- Attach/update side: the killing ship's owner decides the holder, not "the player who's online"
+local actorFaction = Faction(entity.factionIndex)
+local holder
+if actorFaction.isPlayer then
+    holder = Player(actorFaction.index)
+elseif actorFaction.isAlliance then
+    holder = Alliance(actorFaction.index)
+else
+    return -- an AI faction can't hold a script
+end
+holder:addScriptOnce("tracker.lua", ...)
+```
+
+Any later code that reads that same state back (a status command, a UI tab, a second system consuming it) has to check the *same two possible holders* — a player whose Alliance-mate's ship landed the kill has the state sitting on the **Alliance**, not on themselves:
+
+```lua
+-- WRONG: only checks the calling player, silently misses Alliance-attributed state
+if player:hasScript("tracker.lua") then ... end
+
+-- CORRECT: check both possible holders
+local holders = { player }
+if player.allianceIndex and player.allianceIndex > 0 then
+    local alliance = Alliance(player.allianceIndex)
+    if alliance then table.insert(holders, alliance) end
+end
+for _, holder in pairs(holders) do
+    if holder:hasScript("tracker.lua") then
+        -- found it
+    end
+end
+```
+
+> **Rule:** whenever "the actor" can resolve to either a `Player` or an `Alliance`, every downstream reader of that actor's per-actor state must check both possible holders — never assume the player who ran the command is always the one holding it.
+
+Confirmed in Cosmic War's War Bounty License system: `cw_bountypayouts.lua` attaches the tracker to whichever of `Player`/`Alliance` actually landed the killing blow, and both `commands/cosmicwarbounties.lua` and `player/ui/galacticpolitics_tab.lua`'s `getMyLicense()` independently implement the same "check the player, then check their alliance" read-back — the pattern that keeps a shared War Bounty License visible to every member of an Alliance, not just whichever member happens to be looking it up.
+
 ### Renaming and the Galaxy Map ship list are locked out of Lua
 
 `Alliance`/`Faction.name` is strictly read-only — there's no `setName()` exposed to Lua, and short of hand-editing `alliances.dat` while the server is offline, in-game renaming isn't reachable from a mod. The Galaxy Map's ship-list panel is likewise fully hardcoded in C++: the `GalaxyMap` Lua API can draw overlays, custom pins, and territory colors, but has zero hooks into that specific panel.
 
+### `entity.factionIndex = 0` isn't a safe "don't care" value — it means unowned, and unowned means unenterable/undockable
+
+`0` looks like an inert placeholder, so it's tempting to strip a scripted ship's faction to `0` after spawn once you no longer need it for anything gameplay-relevant — e.g. to sidestep a faction-relations side effect somewhere else in the mod. It isn't inert: `0` is vanilla's explicit **"no owner"** sentinel, checked by name in vanilla scripts (`entity/antismuggle.lua`'s `if ship.factionIndex == 0 then goto continue end`, `entity/claim.lua`'s `if self.factionIndex ~= 0 then return false end` gating whether an *asteroid* is even eligible to be claimed) and, more importantly, by several **native, non-Lua** ownership checks that gate basic player interaction with a craft:
+
+- The enter-craft action refuses outright with the client-side string `"This craft has no owner."` (`IShipOwner.cpp`, per the vanilla localization template) — there is no faction to resolve as "you may pilot this."
+- Docking-permission resolution needs a real owning faction to grant or deny permission against; with no faction to check relations to, nobody can be granted access.
+
+Both failures look like generic, unrelated "the ship is broken" symptoms from a player's perspective (docking silently refused, "no owner" on enter) with no obvious link back to a `factionIndex = 0` line three files away — this is a silent-failure trap in the same family covered in "Start Here — Core Concepts" above, just surfacing through a native system instead of a Lua one.
+
+```lua
+-- WRONG: "I don't need this ship's faction for anything else, so zero it out"
+diplomat.factionIndex = 0
+-- ...ship is now permanently undockable and unenterable by anyone
+
+-- CORRECT: leave real ownership in place; solve the actual side effect at its source
+-- (e.g. remove the specific script/RPC that was worsening relations, not the ownership itself)
+diplomat:removeScript("data/scripts/entity/civilship.lua")
+```
+
+> **Rule:** never assign `factionIndex = 0` to a ship a player is meant to interact with (dock, board, or take control of) — reserve it for enemies/hazards nobody should ever own or pilot (vanilla does exactly this for Xsotan bosses in `xsotantransformed.lua` and the Behemoth in `spawnbehemoth.lua`), or for objects using vanilla's own claim-to-acquire flow (`claim.lua`). If a scripted ship is misbehaving through some *other* system (relations, threaten/worsen-relations RPCs, competing interaction menus), fix that system directly instead of reaching for a faction-ownership workaround — removing a specific offending script is strictly more targeted than stripping the ship's ownership entirely, and doesn't collateral-damage every unrelated ownership-gated system on the entity.
+
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 🌌 Sectors, Galaxy & Missions
 
@@ -934,6 +1169,55 @@ if valid(_t) and _t.type == EntityType.Station and _t.factionIndex == enemyIndex
     table.insert(targets, _t)
 end
 ```
+
+### A `mission.<verb>` field is not a framework hook unless `structuredmission.lua` actually reads that name
+
+It's natural to reach for `mission.abandon = function() ... end` to hang custom logic (a relations penalty, a warning chat message) off a mission being abandoned — the name reads correctly, and `mission` is the shared table every phase/hook lives on. But `structuredmission.lua`'s own dispatcher only ever calls `mission.currentPhase.onAbandon` and `mission.globalPhase.onAbandon` (from its global `onAbandon()`, itself called by the `abandon()` RPC target). A field named `mission.abandon` — without the phase table and the `on`-prefixed name — is not on that dispatch path at all. Lua doesn't error on setting or "overriding" a plain, previously-`nil` table field; it just silently creates one nobody ever reads.
+
+```lua
+-- WRONG: reads as "the abandon handler for this mission," but the framework
+-- never looks at mission.abandon anywhere — this code never runs.
+local original = mission.abandon
+mission.abandon = function()
+    CosmicVaultFaction.changeRelations(player.index, giverIndex, -20000)
+    if original then original() end
+end
+
+-- CORRECT: matches the actual dispatch path onAbandon() reads.
+-- globalPhase is right for logic that should fire regardless of which
+-- phase is active; use mission.currentPhase.onAbandon instead if the
+-- handler is genuinely phase-specific.
+local original = mission.globalPhase.onAbandon
+mission.globalPhase.onAbandon = function()
+    CosmicVaultFaction.changeRelations(player.index, giverIndex, -20000)
+    if original then original() end
+end
+```
+
+The same check applies to every lifecycle hook this guide's mission framework exposes (`onFail`, `onFinish`, `onAccomplish`, `onReward`, `onPunish`, `onRestore`, `onSync` — all read from `mission.currentPhase.*` / `mission.globalPhase.*`, never from a bare `mission.<verb>`). Before wiring an override onto anything on the `mission` table that isn't `mission.data.*`, `mission.phases[N]`, `mission.globalPhase.*`, `mission.makeBulletin`, or `mission.getRewardedItems`, grep `structuredmission.lua` itself for the exact field name you're about to assign — a plausible-sounding name is not verification.
+
+> [!WARNING]
+> **Confirmed real case, and it shipped for a long time before anyone noticed.** Every War Contract mission file in Cosmic War used the `mission.abandon = function() ... end` pattern above to apply a relations penalty and a warning chat message when a player abandoned the contract — dozens of files, all copied from the same template, going back well before the v4.0.0 pass. None of it ever ran: the penalty never applied and the message never sent, for the entire life of the feature, because every file wired the override onto a field the framework never reads. It survived multiple prior line-by-line reviews because each file *looks* internally consistent — the "capture the original, then wrap it" chain (`local original = mission.abandon`, `if original then original() end`) is exactly the shape a real override takes, so nothing about the code in isolation looks wrong. The bug only surfaces by checking the framework's own dispatch code, not by re-reading the override site harder.
+
+### A mission's `getBulletin()` reward struct silently wins over `initialize()`'s own inline formula
+
+A War-Contract-style mission (the `structuredmission.lua` pattern this guide's own missions use) commonly computes its reward in **two places**: `getBulletin(station)` builds a `rewardStruct` to display and hand off to the mission board, and `initialize(factionIndex)` computes its own `baseReward` inline as a fallback. The wiring that connects them is easy to miss: vanilla's `bulletinboard.lua` accepts a mission via `player:addScript(bulletin.script, unpack(bulletin.arguments or {}))`, and a mission's own `arguments = { { giver = ..., reward = rewardStruct } }` means that single table becomes `initialize()`'s first parameter. Every mission in this pattern opens with:
+
+```lua
+local fIndex = factionIndex
+local precomputedReward = nil
+if type(factionIndex) == "table" then
+    fIndex = factionIndex.giver or factionIndex[1]
+    precomputedReward = factionIndex.reward
+end
+-- ...
+mission.data.reward = precomputedReward or { credits = baseReward * ..., ... }
+```
+
+On the standard mission-board accept path, `factionIndex` **is always a table**, so `precomputedReward` is always truthy — meaning `getBulletin()`'s formula is what actually pays out, and `initialize()`'s own inline `baseReward` calculation is dead code that only runs if the mission is ever spawned directly with a bare faction index (a path that, for a board-only mission, may not exist anywhere in the codebase at all).
+
+> [!WARNING]
+> **This makes a rebalance patch easy to ship half-fixed.** If a formula is corrected in `initialize()` but the duplicate copy in `getBulletin()` is missed — an easy mistake, since the two are typically dozens of lines apart and look like restatements of each other — the fix will never reach a player who accepts the mission the normal way. A confirmed real-world instance: three War Contract missions in Cosmic War had a v4.0.0 changelog entry describing their reward formula as "realigned," with the corrected formula and an explanatory comment sitting in `initialize()` — but `getBulletin()`'s separate copy of the same formula was never touched, so every actual play-through kept paying the old, lower amount. **Whenever you change a reward/value formula in a mission file, grep the whole file for every occurrence of the changed constants before considering the fix complete — then confirm which occurrence the engine's own dispatch path (here, `getBulletin()`) actually feeds into `precomputedReward`, since that's the one that's live.**
 
 ### Give players a real HUD marker for in-sector coordinates
 
@@ -1011,6 +1295,8 @@ Interacting with `goods["Some Good"]` or `tableToGood()` without both includes c
 - Shipyard production timers live on the physical station entity and stop ticking the moment its sector unloads. To let a queued build keep progressing while the player is elsewhere, move the timer to a background `Player` script: pull the job data out via `Shipyard.secure()`, tick it in the background, and materialize the finished ship via progressive materialization (or `Sector():createShip()` if the player happens to be present when it completes).
 
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## 🔄 Self-Healing Systems — Idempotent Triggers & Reconciliation
 
@@ -1189,7 +1475,7 @@ Neither `Sector():createShip()`/`createStation()` nor this mod's own `EclipseGen
 
 ### Case study: a mod installed onto an existing save (Cosmic War)
 
-> ⚠️ **Recalled from memory and logs, not re-verified against current Cosmic War source** — the exact file/function has since changed enough that it couldn't be pinned down again while writing this entry. Included because the *shape* of the bug and fix is a genuinely useful second data point; treat the specifics as per my own recollection, not a confirmed code citation like the two Ascendancy case studies above.
+> ⚠️ **Recalled from memory, not re-verified against current Cosmic War source** — the exact file/function has since changed enough that it couldn't be pinned down again while writing this entry. Included because the *shape* of the bug and fix is a genuinely useful second data point; treat the specifics as the author's own recollection, not a confirmed code citation like the two Ascendancy case studies above.
 
 The same shape shows up outside mission triggers entirely. Cosmic War's faction diplomacy system (traits, War Heat) is meant to apply to every AI faction in the galaxy — but a player installing the mod mid-playthrough, onto a save with AI factions the vanilla engine had already generated (see "Lazy generation" above — factions are born on demand, not all at once), found that pre-existing factions never got proper traits or War Heat and simply never went to war like the mod intended. A setup pass that only ran once, for factions that existed *at that moment*, permanently missed every faction that existed before the mod was installed. This is the exact "Lazy generation" trap in different clothes: `Galaxy:onFactionCreated(index)` alone only catches factions born *after* your mod starts listening — it says nothing about the ones already sitting in `server:getFactions()` the moment your mod's `initialize()` runs. Treating faction setup as self-healing (periodically re-scan `server:getFactions()`, or check each faction for the traits/War Heat state your mod expects and apply it if missing, rather than trusting a single "have I ever processed this galaxy" flag) closes that gap for every faction regardless of when it — or the mod — first appeared.
 
@@ -1207,17 +1493,22 @@ Not every one-shot flag deserves this treatment — over-applying it is its own 
 
 ---
 
+[⬆ Back to top](#-table-of-contents)
+
 ## 🧩 Cross-Mod Compatibility
 
 ### Soft-dependency: wrap optional includes in `pcall`
 
 If your mod merely *benefits* from another mod being present (an optional add-on relying on a shared core library), wrap the include: `pcall(require, "module")` (or `pcall(include, ...)`) so a missing dependency doesn't crash your script outright.
 
-### Hard-dependency: don't wrap it, and don't hard-`include()` a sister mod either
+### Hard-dependency: you don't need to wrap it, and don't hard-`include()` a sister mod either
 
-For mods in a tightly-coupled *required* suite (all needing a shared core library), don't wrap the shared include in `pcall` — let a broken installation fail loudly instead of silently misbehaving.
+For mods in a tightly-coupled *required* suite (all needing a shared core library), a `pcall` around the shared include isn't necessary — a broken installation is free to fail loudly instead of silently misbehaving. This isn't a ban on guards, though: if one genuinely simplifies a specific piece of logic, there's no harm in adding it. The point is that the *absence* of a guard around a library the whole suite requires is not itself a defect to flag.
 
-But if two *sibling* mods in that suite need to share data with each other (not just the shared core), don't hard-`include()` one sibling's files from the other — that creates a real physical dependency between mods that are supposed to be independently optional. Instead, have the source mod serialize what it needs to share into a delimited string pushed to global state, and have the consumer parse it defensively:
+> [!NOTE]
+> **`modinfo.lua` can't express a mutual/circular dependency.** Declaring two mods as each other's required dependency throws a "loop dependency error" at load — Avorion's dependency resolver can't handle a cycle. If your suite has several sibling mods that genuinely require *each other* (not just a shared core library), you cannot state that relationship in `modinfo.lua` directly. The working pattern: every sibling declares only the shared, non-circular core library as its one `modinfo.lua` dependency (a hub every sibling needs, that itself needs none of them back — `Cosmic Vault` in this workspace), and the mutual sibling-to-sibling requirement is enforced one layer up, at the *distribution* level instead: Steam Workshop's own "Require Items" setting on each mod's page, which prompts a subscriber to also subscribe to everything else you've marked required there. `modinfo.lua` has no visibility into that setting — it's configured on the Workshop page, entirely separate from the mod's own declared dependencies. A missing sibling under this setup is the same class of "didn't meet the stated requirement" as a missing core library, guarded or not — not a case to code defensively around. (Confirmed real-world instance: this workspace's Core 4 — `Cosmic Overhaul`, `Cosmic War`, `Cosmic Chronicles`, `Cosmic Ascendancy` — all mutually require each other in practice, but only declare `Cosmic Vault` in `modinfo.lua`; the mutual requirement is enforced through each mod's Workshop "Require Items" list instead.)
+
+But if two *sibling* mods in that suite need to share data with each other (not just the shared core), don't hard-`include()` one sibling's files from the other — even siblings that mutually require each other per the note above are still packaged, versioned, and distributed as separate mods, and a literal file-path `include()` into another mod's own folder creates a real physical coupling that breaks the moment that mod's internal file layout changes, regardless of whether the two are "optional" relative to each other. Instead, have the source mod serialize what it needs to share into a delimited string pushed to global state, and have the consumer parse it defensively:
 
 ```lua
 -- Mod A publishes:
@@ -1241,6 +1532,10 @@ end
 
 If Mod A isn't installed, `getValue` simply returns `nil` and the whole block gracefully no-ops — Mod B functions correctly standalone.
 
+### A genuinely optional sibling is where the `pcall` guard actually belongs
+
+Not every mod in a suite is mutually required the way the previous section describes. A suite can also ship a sibling that's a real, opt-in extra — needs the shared core library, but nothing in the core or the required siblings needs it back (an example from this workspace: `Cosmic Starfall`, which only depends on `Cosmic Vault` and adds its own optional content — news items, weapons, buffs — that other mods may reference but never require). Code in a required sibling that reaches into a genuinely optional one's content is exactly the "Soft-dependency" case from the top of this section, and belongs behind a real `pcall`/existence guard: that installation gap is a legitimate, by-design possibility, not the "didn't meet the stated requirement" case the NOTE above is about. Telling the two apart before choosing whether to guard: does the *suite's own Workshop "Require Items" list* pull this sibling in for every required mod, or is it genuinely left off some of them by design? The former is a hard dependency (guard optional, not needed); the latter is the case guards exist for.
+
 ### Always null-check a cross-mod library table before indexing into it
 
 ```lua
@@ -1255,6 +1550,12 @@ if bridge and bridge.getSomeValue then
     local v = bridge.getSomeValue(index)
 end
 ```
+
+### Before modifying a shared piece of state, grep for who actually writes it — not just who reads it
+
+A shared library table (Cosmic Vault's `CosmicVaultTerritory.getContestedZones()` is a real example) is easy to mistake for something *your* mod owns just because your mod is the one consuming it most visibly — running background timers off it, rendering its progress bar, resolving its outcome. None of that means your mod is the one that *creates* an entry in the first place. If a feature needs to modify that state (extend a timer, change a value already in flight), grep the whole workspace for the setter (`setContestedZone`, not `getContestedZones`) before writing code that assumes you can find and edit an existing call site — you may find zero call sites in your own mod, meaning a sibling mod is the sole writer and your own mod is a pure consumer.
+
+That isn't a dead end. A shared library's setter is generally an upsert, safe to call a second time from a different mod entirely — reading the current value back, computing a new one, and writing it again through the same public API is standing on the same ground the original writer stood on, not reaching around it. What it does mean is you can't assume you already have the write call site to edit; you're adding a *new* one, from outside, through the library's own front door. Confirmed real-world instance: a "scale this siege's duration by distance" feature was planned assuming the consuming mod (Cosmic War) called `CosmicVaultTerritory.setContestedZone()` to start the siege it was already resolving and rendering the HUD for — it doesn't; Cosmic Ascendancy does, and Cosmic War only ever reads the zone back. The fix wasn't a redesign, just calling the same shared setter again, once, from the consuming side, with a recomputed duration — but assuming ownership without grepping for it first would have meant either inventing a parallel duration-tracking system or wrongly concluding the feature needed a change to a sibling mod's own files.
 
 ### Guard global engine objects inside shared libraries
 
@@ -1293,7 +1594,116 @@ This generalizes past this one library: any shared helper whose config is "pass 
 
 `Cosmic Ascendancy`'s Choir feature needed lines that only exist once the Eclipse has actually reached a specific state (unleashed / fully awake / a Fallen Empire). The correct fix isn't a conditions key at all — it's to not call `registerLine()` for that tier until the state transition that tier represents has actually happened (called once from each one-shot transition block, the same place other one-time effects for that transition already live). A line that hasn't been registered yet can't be eligible; that's a stronger guarantee than any runtime condition check could provide, and it doesn't depend on the library supporting anything it doesn't.
 
+### Splitting a `Shop` namespace into several sub-shop tabs orphans anything an outside script injects into the original by name
+
+`ShopAPI.CreateNamespace()` (`lib/shop.lua`) is designed around ONE `Shop` instance per namespace: `initialize()` calls `shop:initialize()`, `initUI()` calls `shop:initUI()` (which builds that instance's own buy tab and, if `showSpecialOffer` isn't explicitly disabled, its own `specialOfferUI`), and external code can reach into the namespace by its script name — `entity:invokeFunction("equipmentdock", "setSpecialOffer", item, amount)` — to force an item into that specific `Shop` instance's `specialOffer.item` field, entirely independent of whatever the namespace's own generation code does. Vanilla itself relies on exactly this: `data/scripts/items/equipmentmerchantcaller.lua` (the "Trade Guild Beacon" item behind the main story's "buy an artifact from a Mobile Merchant" quest step) calls `ship:invokeFunction("equipmentdock", "setSpecialOffer", SystemUpgradeTemplate("teleporterkey4.lua", ...), 1)` on the ship it just spawned, to guarantee the quest item is buyable.
+
+Splitting a single-tab `Shop` namespace into several category sub-shops (each its own `ShopAPI.CreateNamespace()` instance, e.g. Equipment Dock's Civilian/Military/Misc Upgrade tabs) commonly neuters the *original* namespace's `initUI()` to an empty function, since the new sub-shops now build the real tabs. That's correct for the sub-shops — but it silently strips the ORIGINAL namespace's `Shop` instance of any UI at all. Nothing calls `shop:initUI()` for it anymore, so `specialOfferUI` and `buyTab` are never created. `setSpecialOffer()` itself is untouched and still writes to `specialOffer.item` correctly — the data is there — but there is no longer any tab, anywhere, that ever renders it. The result: a vanilla (or another mod's) external `invokeFunction` call that used to force an item into the shop keeps "succeeding" with zero errors and zero log output, while the item it injects becomes permanently unbuyable. If that item happens to gate a main-story mission step, the quest silently soft-locks for every player who has the split-tab mod installed — no crash, no error, nothing in the changelog's own reviewed files to catch it (see the Cross-Mod Compatibility checklist item on grepping the whole workspace for external `invokeFunction` callers before treating a namespace split as complete).
+
+```lua
+-- WRONG: initUI() emptied out because "the sub-shops build the real tabs now" —
+-- true for normal item generation, but this namespace is also an invokeFunction target
+-- from OUTSIDE the mod (vanilla's equipmentmerchantcaller.lua calls setSpecialOffer on it directly).
+function EquipmentDock.initUI()
+end
+
+-- CORRECT (one option): keep a minimal special-offer-only surface alive on the
+-- original namespace so anything that injects state into it by name still has
+-- somewhere to render — e.g. call shop:initUI(...) with the regular item rows
+-- suppressed, or forward setSpecialOffer's payload into the correct category
+-- sub-shop by its own CosmicVaultUpgradeCategories.getCategory(script) lookup.
+```
+
+Before emptying out a namespace's `initUI()`/UI-building function as part of a "split into several tabs" refactor, grep the whole workspace (vanilla included) for `invokeFunction("<that-namespace's-script-name>"` and `addFront`/`setSpecialOffer`/`setStaticSeed` calls against it. If anything external reaches in by name, the split needs to either keep a live surface for that injection or explicitly forward it into wherever the real UI moved to — it can't just be dropped.
+
+### A registry's single-lookup fallback doesn't carry over to its own bulk/reverse-enumeration function
+
+A category/tag registry commonly exposes two functions: a forward lookup (`getCategory(key) -> value`, often with a documented "unknown keys default to X" fallback) and a reverse/bulk enumerator (`getScriptsOfCategory(value) -> array of keys`) used by whatever actually builds a category-filtered list. These two are not automatically consistent just because they're declared next to each other and described by the same doc sentence. A reverse enumerator built the obvious way —
+
+```lua
+function Registry.getScriptsOfCategory(category)
+    local result = {}
+    for scriptPath, cat in pairs(categories) do
+        if cat == category then table.insert(result, scriptPath) end
+    end
+    return result
+end
+```
+
+— can **only** return keys that were explicitly written into `categories` via `registerCategory()`. It structurally cannot include an unregistered key, no matter what `getCategory(unregisteredKey)` would separately return for it. If the real consumer (a shop's item generator, in this case) calls `getScriptsOfCategory()` rather than `getCategory()` — which it usually does, since it needs "every script in category X," not "what category is script Y" — then the single-lookup fallback's safety promise ("an unrecognized script from another mod still shows up somewhere instead of vanishing") is simply not wired into the code path that matters, even though it's real, working code sitting right next to it. The practical effect: an external Workshop mod's own custom upgrade system, or any vanilla script not on the registry's pre-registered list, never appears in ANY category tab, permanently — the exact compatibility failure the registry's own docs claim it prevents.
+
+Before trusting a "defaults unregistered entries to category X" claim about a registry, identify the specific function the real consumer actually calls and verify the fallback lives inside *that* function — not a same-purpose sibling with a similar name. If the consumer uses a reverse enumerator over the registry's own stored keys, the only real fixes are: register everything that needs to be found (impractical for external content), or have the enumerator/generator separately pull from the full universe of possible items (e.g. `UpgradeGenerator`'s own complete script list) and filter by `getCategory()` per item, rather than only walking the registry's own keys.
+
+### A shared function declared *inside* `if onServer() then ... end` is `nil` on the client — not a safe no-op
+
+There are two different ways a shared library can restrict a function to the server, and they fail completely differently when a client calls them anyway:
+
+```lua
+-- PATTERN A: the function always exists; its BODY guards. Safe to call unconditionally --
+-- calling it client-side is a harmless no-op.
+function MyLib.doServerThing(x)
+    if not onServer() then return end
+    -- ... real work ...
+end
+
+-- PATTERN B: the function only exists inside the onServer() block. On the client this
+-- whole block never runs, so MyLib.doServerThing is nil -- not a function that no-ops,
+-- a missing key. Calling it crashes with "attempt to call a nil value (field 'doServerThing')".
+if onServer() then
+    function MyLib.doServerThing(x)
+        -- ... real work ...
+    end
+end
+```
+
+Both patterns look identical from the call site — `MyLib.doServerThing(x)` — until a client actually calls one. `Cosmic Vault`'s own `cosmicvaultterritory.lua` uses Pattern B: `getContestedZones()`, `setContestedZone()`, `removeContestedZone()`, `resolveSiege()`, `updateServer()` and `expandToSector()` are all declared inside a single top-level `if onServer() then ... end` block, so on the client `CosmicVaultTerritory` is an empty table with none of those keys.
+
+This bit `Cosmic War`'s `siegeevent.lua`: its `SiegeEvent.initialize()` has no `onServer()`/`onClient()` guard at all (unlike its own sibling event scripts — `cw_fleetclash.lua` and `cw_eclipse_vanguard.lua` both correctly open `initialize()` with `if onClient() then return end`), and per the "`update(timeStep)` is a real, third tick callback" section above, an unqualified `initialize()` on a `Sector()`-attached script fires on **every** side that has the script loaded — including a client physically present in the sector, which is exactly when `sector:addScriptOnce("events/siegeevent.lua")`-style dynamic attachment is used. The very first line of that `initialize()` calls `CosmicVaultTerritory.getContestedZones()` unconditionally, so every client who enters a contested sector hits the nil-call crash immediately, before the function ever reaches the entity-spawning code that genuinely does need to be server-only.
+
+**The fix, and the general rule:** unless you've proven every call site is unreachable from the client, prefer Pattern A (function always defined, guards its own body) for anything in a shared library — it degrades to a harmless no-op instead of a hard crash when a caller gets the client/server split wrong. Reserve Pattern B for functions whose entire *closure* (locals captured from the `if onServer()` block, like `cosmicvaultterritory.lua`'s private `serializeZones`/`deserializeZones` helpers) genuinely cannot exist client-side — and even then, document loudly that the function is conditionally absent, not just conditionally inert.
+
+### A `Player()`-targeted "push" API must be called *from the server* — never from inside the client handler it pushes to
+
+Some shared UI/notification helpers take a `Player()` object and route a message down to that specific client via `player:invokeFunction(script, fn, ...)` — the standard server→client RPC pattern (see "Re-entrant VM deadlocks" above and `Player():getValue()`/`setValue()` further down for the same client/server asymmetry). `CosmicVaultUI.ShowCinematicBanner(player, text, color, soundPath, duration, theme)` (`cosmicvaultui.lua`) is exactly this shape: its very first line is `if not onServer() then return false end`, and its actual work is a `player:invokeFunction("cosmicvaultcinematic.lua", "showBanner", ...)` call that only makes sense as a server pushing to one client's own script instance.
+
+`Cosmic War`'s `cw_eclipse_vanguard.lua` called this function from the wrong side of that boundary. The server-side `spawn()` correctly calls the ENGINE'S OWN broadcast primitive, `broadcastInvokeClientFunction("showVanguardBanner")`, to tell every client to run `showVanguardBanner()` locally — but that client-side handler then tried to call the Vault helper *on itself*:
+
+```lua
+-- WRONG: showVanguardBanner() runs ON THE CLIENT (that's the whole point of
+-- broadcastInvokeClientFunction) -- but ShowCinematicBanner's own onServer() guard
+-- means it silently returns false and does nothing when called from there.
+function CW_EclipseVanguardEvent.showVanguardBanner()
+    if onClient() then
+        CosmicVaultUI.ShowCinematicBanner(Player(), "ECLIPSE VANGUARD INBOUND", ...)
+    end
+end
+
+-- CORRECT: call the server-only helper from the server, once, looping over the
+-- players who need to see it -- let ITS OWN internal invokeFunction do the pushing,
+-- rather than broadcasting first and trying to call a server-only helper on the far side.
+function CW_EclipseVanguardEvent.spawn()
+    -- ... server-side spawn logic ...
+    for _, player in pairs({Sector():getPlayers()}) do
+        CosmicVaultUI.ShowCinematicBanner(player, "ECLIPSE VANGUARD INBOUND", ...)
+    end
+end
+```
+
+The banner never rendered for any player — no error, no log line, because `if not onServer() then return false end` is a *quiet* guard, not a crash. Before wiring a shared helper into a `broadcastInvokeClientFunction`/RPC chain, check which side the helper's own top-level guard requires and call it from there directly, rather than assuming a function that accepts a `Player()` argument is safe to call from that same player's own client.
+
+### `EntityType.WormHole` — capital H, not `Wormhole`
+
+`EntityType`'s member for a wormhole entity is `WormHole` (confirmed in `Globals.lua`'s enum table). It's easy to write `EntityType.Wormhole` instead — the natural English capitalization — especially since a *different*, real enum in the same file (`SectorChangeType.Wormhole`) genuinely does use that exact lowercase-h spelling, so autocomplete or memory from one enum can plant the wrong casing in the other. `EntityType.Wormhole` isn't an error at the point of use — indexing a table with a key that isn't there just returns `nil` — so `sector:getEntitiesByType(EntityType.Wormhole)` silently becomes `sector:getEntitiesByType(nil)`, which either errors deeper in the engine or (worse) quietly returns nothing every time, so a "does a wormhole already exist here" check always reads false. Caught during self-review before ever running, not from a crash report — cross-check enum member spelling against `Globals.lua` directly rather than trusting the capitalization that reads naturally.
+
+### Two different `createWormHole`s live on two different objects — don't reach for the generation-time one at runtime
+
+`Sector:createWormHole(x, y, color, visualSize, passageSize)` (confirmed in `Avorion Stubs/Sector.lua`) creates a real wormhole entity in the **currently loaded sector**, pointing at destination `(x, y)` — this is the one a live mod script calls to inject a wormhole during actual gameplay. `SectorGenerator:createWormHole(x, y, color, size)` is a **different function on a different object**, used internally by vanilla's own procedural galaxy generation (`lib/SectorGenerator.lua`) to build the initial wormhole network at map-creation time; it computes `from` as the generator's own `self.coordX/coordY`, which is meaningless once generation has finished. The two are easy to conflate since they share a name and a rough purpose. What IS safe and intended to reuse live, though, is `SectorGenerator:wormHoleAllowed(from, to)` — the barrier/passability check `SectorGenerator:createWormHole` calls internally — which works correctly when called on a freshly-constructed `SectorGenerator(x, y)` instance at any time (it lazily builds its own `PassageMap(Server().seed)` on first use), so a mod can gate a live `Sector():createWormHole()` call against the exact same passability rule vanilla's own generation uses, without needing to be inside a generation pass itself.
+
+`passageSize` (`Sector:createWormHole`'s 5th argument) is documented as optional — "If nil max value will be used" — so a 4-argument call (`x, y, color, visualSize`) is intentional and complete, not a truncated call missing a required parameter.
+
 ---
+
+[⬆ Back to top](#-table-of-contents)
 
 ## ⚡ Quick-Reference: Common Crashes
 
@@ -1310,6 +1720,7 @@ This generalizes past this one library: any shared helper whose config is "pass 
 | Purging a script in a loop | `while entity:hasScript() do entity:removeScript() end` | A single `if` — `removeScript` is deferred |
 | Ending a script from inside itself | Self-`removeScript()` + `terminate()`, or self-`removeScript()` alone | `terminate()` alone — it already removes the calling script |
 | Unknown C++ properties | `entity.numFactions` | Use a real method, verify against the stub first |
+| Registering a `ScriptUI` interaction | `ScriptUI():registerInteraction(...)` inside `initialize()` | Move it to its own `initUI()` — a separate, engine-invoked lifecycle callback |
 | Skipped positional arguments | `createWreckage(faction, matrix)` | `createWreckage(faction, nil, 10, matrix)` |
 | Paying an AI faction | `faction:pay("text"%_T, amount)` | `faction:payWithoutNotify("text", amount)` |
 | Holding userdata across a yield | `local ship = Entity(sid)` before `Yield()` | Store `id.string`, re-fetch after resuming |
@@ -1331,10 +1742,30 @@ This generalizes past this one library: any shared helper whose config is "pass 
 | `attempt to get length of a userdata value` | `local x = sector:getEntitiesByType(t)` | `local x = {sector:getEntitiesByType(t)}` — it returns multiple values, not a table |
 | Unrestricted debug RPC | A `callable()`-registered function gated only by a client-side `if _debug then` wrapper | Add a server-side `Owner()`/`callingPlayer` ownership check inside the function itself |
 | `restore()` silently doesn't restore anything | `local x = ...` inside `restore()`, shadowing a module-scope `local x` other functions read | `x = ...` (no `local`) to update the actual outer variable |
+| `Error constructing NamedFormat: not enough arguments` | `NamedFormat("Trade Rumor..."%_T)` | `NamedFormat("Trade Rumor..."%_T, {})` — the table argument is required, even when empty |
+| "This craft has no owner" / docking always denied | `entity.factionIndex = 0` on a ship players must dock/enter | Keep real faction ownership; fix the actual side effect at its source (e.g. remove the offending script) |
+| Registry never cleans up a destroyed entity's entry | Cleanup logic hooked to `onRemove()` | Hook `onDelete()` — it's the one that fires when the object itself is deleted |
+| Split-tab shop's externally-forced special offer never shows up | Emptying `Shop`'s `initUI()` without checking for outside `invokeFunction("<name>", "setSpecialOffer", ...)` callers | Grep the whole workspace for external callers of the namespace by name before removing its UI |
+| "Unregistered items default to category X" claim | Verifying only the single-lookup `getCategory(key)` fallback | Check whether the real consumer instead calls a reverse enumerator (`getScriptsOfCategory`) — it can't surface unregistered keys at all |
+| Shared function only defined inside `if onServer()` | Calling it unconditionally from a script whose `initialize()` also runs client-side | Either guard the call site, or have the library guard the function's own body instead of omitting it entirely |
+| `Player()`-targeted push API called from the client | `if onClient() then MyLib.ShowThing(Player(), ...) end` inside a `broadcastInvokeClientFunction` handler | Call the server-only helper from the server, looping over target players — let its own `invokeFunction` do the pushing |
+| Mission abandon penalty silently never fires | `mission.abandon = function() ... end` | `mission.globalPhase.onAbandon = function() ... end` — `structuredmission.lua` never reads `mission.abandon` |
 
 ---
 
+[⬆ Back to top](#-table-of-contents)
+
 ## 📚 Appendix — Engine Trivia & Hard Limitations
+
+### Source reliability hierarchy — where to verify an API claim
+
+When you're not sure whether a property or method genuinely exists, check sources in this order:
+
+1. **`Avorion Stubs/<ClassName>.lua`** (or `Globals.lua` for free functions/enums) — the authoritative, per-class Lua reference, hand-converted from the official docs. Reachable via the `get_avorion_object`/`search_avorion_api` MCP tools, or by reading the file directly.
+2. **`Avorion API Indexes Documentation` (raw HTML)** — the ultimate ground truth, scraped straight from the vanilla game, that the stubs above were converted from. Reachable via `search_html_api`. Use this whenever a stub lookup comes back empty and you're not yet confident the thing genuinely doesn't exist. Another confirmed gap, alongside `Entity.damageMultiplier` below: `Avorion Stubs/Weapon.lua`'s property list omits `holdingForce` entirely, even though `Weapon.html:411` documents it (and vanilla's own `lib/inventoryitemprice.lua` reads `object.holdingForce` on `WeaponType.ForceGun` items) — `search_avorion_api`/`get_avorion_object` alone would have wrongly flagged a real, working line of code as an invented property.
+3. **Vanilla script source** (`Avorion_Vanilla_Copy` / `Vanilla_Reference`) — proof by actual usage, useful for confirming call signatures and argument order in practice, not just declared existence.
+
+There is **no single-file mega-stub anymore.** `Avorion_Mega_Stub.lua` used to exist as a compacted, single-file merge of the entire `Avorion Stubs` folder, purely for convenience — but it was retired, because maintaining two copies of the same API surface let them silently drift apart, and a verification pass against the mega-stub once missed a real, existing property (`Entity.damageMultiplier`) that grepping `Avorion Stubs/` directly caught immediately (see "`entity.damageMultiplier` is real" above). If you ever see a reference to `Avorion_Mega_Stub.lua` anywhere — an old note, a stale doc, a cached IDE setting — treat it as a pointer to `Avorion Stubs/` instead; the content is the same, just organized as 234 per-class files rather than one giant one.
 
 ### What's genuinely locked behind C++ (can't be modded around)
 
@@ -1347,8 +1778,6 @@ This generalizes past this one library: any shared helper whose config is "pass 
 ### Loading screen tips can be hijacked, not extended
 
 The list of loading-screen hint text is hardcoded client-side (`LoadingScreenTipSelector.cpp`) with no Lua-exposed array to append to. You can't add *new* tips, but you can override the text of an *existing* vanilla tip via a `.po` localization override, which lets you slip in custom lore or an easter egg wherever the engine happens to roll that particular vanilla tip.
-
-> ⚠️ Untested: This has not been throughouly tested to prove it actually works.
 
 ### Sector material strength (balancing reference)
 
@@ -1393,3 +1822,18 @@ DamageSource = { Energy = 0, Collision = 1, Decay = 2, Arbitrary = 3, Torpedo = 
 ---
 
 *Cross-referenced against `Avorion Stubs/` (the authoritative per-class API reference), the vanilla script source (`Avorion_Vanilla_Copy` / `Vanilla_Reference`), and the official `Avorion API Indexes Documentation` HTML pages wherever a claim could be checked. If something here ever stops matching a future game update, trust the stubs over this document — and update this document to match.*
+
+
+[⬆ Back to top](#-table-of-contents)
+
+---
+
+## 🤝 Contributing to This Codex
+
+Found a mistake? Confirmed one of the ⚠️ **Unverified** entries one way or the other? Have a hard-won lesson of your own from modding Avorion?
+
+Contributions are welcome — see **[CONTRIBUTING.md](../CONTRIBUTING.md)** for the ground rules (short version: verify against `Avorion Stubs`, vanilla source, or a live test before submitting; match the existing format; mark anything you can't independently confirm as ⚠️ **Unverified**).
+
+## 📄 License & Attribution
+
+This Codex is authored and maintained by **Stormbox**. See the repository's `LICENSE` file for terms. If you reference or adapt this guide elsewhere in the community, a credit back to this repository is appreciated.

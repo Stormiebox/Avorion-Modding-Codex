@@ -1,0 +1,18 @@
+---@class AllianceRank
+AllianceRank = {
+
+	level = 0, -- [read-only] int
+	name = 0, -- [read-only] char
+
+}
+
+---@return AllianceRank
+function AllianceRank()
+	return AllianceRank
+end
+
+---@return table<number, number>
+function AllianceRank:getPrivileges()
+	return {0}
+end
+
