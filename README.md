@@ -1,10 +1,10 @@
 # 🚀 Avorion Modding Codex
 
-[Avorion Modding Codex Wiki Page](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki/Avorion-Modding-Codex)
+[Avorion Modding Codex Wiki Page](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki)
 
 A practical, field-tested guide to Avorion's Lua modding API — written by a modder, for modders. It compiles hard-won lessons learned throughout Stormbox's own modding journey, especially across the **Cosmic Series** of Avorion mods.
 
-**👉 Read the guide: [`Codex Main/Avorion_Modding_Codex.md`](Codex%20Main/Avorion_Modding_Codex.md)**
+**👉 Read the guide: [`Avorion Modding Codex (Wiki)`](https://github.com/Stormiebox/Avorion-Modding-Codex/wiki/Avorion-Modding-Codex)**
 
 Aimed at novice-to-intermediate Avorion modders — if you already know Lua and want to understand *why* the engine behaves the way it does, this is for you.
 

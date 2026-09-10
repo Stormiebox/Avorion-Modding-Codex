@@ -41,8 +41,9 @@ This Codex is open source and welcomes contributions from the wider Avorion modd
 9. [🌌 Sectors, Galaxy & Missions](#-sectors-galaxy--missions)
 10. [🔄 Self-Healing Systems — Idempotent Triggers & Reconciliation](#-self-healing-systems--idempotent-triggers--reconciliation)
 11. [🧩 Cross-Mod Compatibility](#-cross-mod-compatibility)
-12. [⚡ Quick-Reference: Common Crashes](#-quick-reference-common-crashes)
-13. [📚 Appendix — Engine Trivia & Hard Limitations](#-appendix--engine-trivia--hard-limitations)
+12. [💬 Community-Sourced Tips](#-community-sourced-tips)
+13. [⚡ Quick-Reference: Common Crashes](#-quick-reference-common-crashes)
+14. [📚 Appendix — Engine Trivia & Hard Limitations](#-appendix--engine-trivia--hard-limitations)
 
 ---
 
@@ -1705,6 +1706,47 @@ The banner never rendered for any player — no error, no log line, because `if 
 
 [⬆ Back to top](#-table-of-contents)
 
+## 💬 Community-Sourced Tips
+
+> [!NOTE]
+> The entries in this section come from Avorion's official Discord, specifically pinned messages in its modding channels — not from this Codex's own bug-fixing and API-verification process. They're still worth having in one place, but they carry a different kind of confidence than the rest of this guide: most are dev-tool/editor behaviors that live outside the Lua API surface, so there's no `Avorion Stubs` entry or vanilla script line to check them against. Treat them as reliable community knowledge, not independently re-verified facts — and if you can confirm one against a source, feel free to promote it into the relevant section above with a normal citation.
+
+### Debug hotkeys: reloading scripts without restarting the game
+
+You don't need to restart Avorion (or reconnect to a server) to pick up a script change. The client exposes dedicated reload hotkeys:
+
+| Hotkey | Effect |
+| --- | --- |
+| `F5` | Reloads all scripts in the current sector |
+| `F5` (with an object selected) | Reloads all scripts on that specific entity |
+| `Shift + F5` | Reloads all scripts for the player |
+| `Ctrl + F5` | Reloads every script (sector + entity + player) |
+| `F6` | Same effect as toggling `DevMode` in Settings → Mods |
+| `Ctrl + F6` | Clears the texture cache — useful specifically for shader/texture modding, where a stale cached texture can make a change look like it didn't take effect |
+
+### Mod icons have a fixed spec
+
+Workshop/mod icons are expected as **512×512, 24-bit color depth, `.png`**. An icon outside that spec is a common, easy-to-miss reason a mod's Workshop thumbnail looks wrong or fails to display as intended.
+
+### Blocks themselves are not Lua-moddable
+
+Custom block *shapes* and block *types* are not exposed to Lua modding, and per the Discord's own pinned guidance this isn't expected to change — stop looking for a hook to add one. This is a distinct limitation from everything modding *can* touch (stats, generation, UI, missions, entities); see [What's genuinely locked behind C++](#-appendix--engine-trivia--hard-limitations) in the Appendix for the rest of that list.
+
+### Bump your dependency's `max`, remember to bump your own `modinfo.lua` too
+
+If your mod declares a dependency on another mod using the `max = ...` version-ceiling parameter in `modinfo.lua`, remember to actually raise that ceiling when the dependency ships a new version you want to support — an unmodified `max` silently continues to cap compatibility at the old version, which reads to a subscriber as "these two mods don't work together yet" even after the dependency has moved on.
+
+### Already covered elsewhere in this guide
+
+A couple of tips from the same source restate lessons this Codex already documents in more depth — rather than duplicate them here, they're linked from their real home:
+
+- **Matrix member access returns a copy, not a reference** (`matrix.look.x = 14` does nothing; `matrix.look = vec3(14, 5, 5)` is what actually writes) — see [🏁 Start Here — Core Concepts, #4](#-start-here--core-concepts).
+- **Scrollbar sizing and scrollstep quirks** — see the [Scrollbars](#️-ui-development) entry under UI Development.
+
+---
+
+[⬆ Back to top](#-table-of-contents)
+
 ## ⚡ Quick-Reference: Common Crashes
 
 | ⚠️ Pitfall | ❌ Wrong | ✅ Right |
@@ -1782,6 +1824,7 @@ There is **no single-file mega-stub anymore.** `Avorion_Mega_Stub.lua` used to e
 3. **Raw networking.** No sockets. All client-server communication is sanitized and routed through `invokeServerFunction`/`invokeClientFunction`; you cannot run your own network server from inside the client.
 4. **Low-level UI/shaders.** UI is limited to the `UIContainer` primitives (buttons, labels, rectangles...). No arbitrary OpenGL calls, and no dynamically compiling/binding custom GLSL shaders from a script.
 5. **The core server loop.** Tick rate, matchmaking, chunk (sector) loading, and base entity-component serialization are hardcoded — none of it lives in reachable Lua.
+6. **Block shapes and block types.** Per Avorion's official Discord (modding channel, pinned): custom blocks aren't exposed to Lua, and there's no indication that's changing. Distinct from everything else modding *can* reach — stats, generation, UI, missions, entities — this one's just off the table.
 
 ### Loading screen tips can be hijacked, not extended
 
