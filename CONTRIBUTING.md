@@ -2,6 +2,18 @@
 
 Thanks for wanting to add to this. The Codex only stays useful if every entry in it is actually true — so the bar for a contribution is **"can this be checked against something real,"** not just "this sounds right." Here's how to make a PR that's easy to accept.
 
+## 📄 Licensing a contribution
+
+By submitting a pull request, you confirm that you have the right to submit the material you are
+adding or changing. If an original contribution is accepted into the Codex, it will be distributed
+under the repository's [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) license unless
+another arrangement is agreed with the maintainer before acceptance. You keep copyright in your own
+contribution; acceptance gives the project permission to distribute it under that license.
+
+Do not submit copied or derived material unless its source license permits redistribution and the
+required attribution is included. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the
+repository's known third-party and derived material.
+
 ---
 
 ## 🧭 Before you start
