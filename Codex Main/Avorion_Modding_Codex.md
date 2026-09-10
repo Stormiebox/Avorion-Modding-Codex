@@ -18,7 +18,7 @@ This Codex is aimed at **novice-to-intermediate Avorion modders** — if you can
 Every rule below is written as a standalone lesson: what the engine actually does, why it surprises people, and the pattern that works. Where a claim could be checked against the `Avorion Stubs` folder (the authoritative per-class API reference — see the [Appendix](#-appendix--engine-trivia--hard-limitations)) or the vanilla script source, it was. A handful of entries that could **not** be confirmed against any source are clearly marked ⚠️ **Unverified**, so you know to test before relying on them. Where an earlier version of this Codex got something wrong, you'll see a `> [!NOTE]` **Correction** callout instead of a silent edit — this is a living document, and the corrections are part of the record.
 
 > [!NOTE]
-> Setting up `Avorion Stubs` in your own workspace (the game's per-class Lua API reference) is highly recommended, alongside a copy of Avorion's own vanilla script resources. Both are referenced constantly throughout this guide.
+> Setting up `Avorion Stubs` in your own workspace (the game's per-class Lua API reference) is highly recommended, alongside a copy of Avorion's own vanilla script resources. Both are referenced constantly throughout this guide — and copies of `Avorion Stubs/` and the raw `Avorion API Indexes Documentation/` HTML docs are bundled directly in this repository (see the [Appendix](#-appendix--engine-trivia--hard-limitations) for sourcing/credit) so you can follow along without setting them up yourself first.
 >
 > This document is a heavily compacted version of Stormbox's own development diary, which runs past 4,700 lines. A handful of entries may still reference personal tooling (like a retired single-file `Avorion_Mega_Stub.lua`) or files you won't have locally — that's normal, and called out inline wherever it matters.
 
@@ -1766,6 +1766,14 @@ When you're not sure whether a property or method genuinely exists, check source
 3. **Vanilla script source** (`Avorion_Vanilla_Copy` / `Vanilla_Reference`) — proof by actual usage, useful for confirming call signatures and argument order in practice, not just declared existence.
 
 There is **no single-file mega-stub anymore.** `Avorion_Mega_Stub.lua` used to exist as a compacted, single-file merge of the entire `Avorion Stubs` folder, purely for convenience — but it was retired, because maintaining two copies of the same API surface let them silently drift apart, and a verification pass against the mega-stub once missed a real, existing property (`Entity.damageMultiplier`) that grepping `Avorion Stubs/` directly caught immediately (see "`entity.damageMultiplier` is real" above). If you ever see a reference to `Avorion_Mega_Stub.lua` anywhere — an old note, a stale doc, a cached IDE setting — treat it as a pointer to `Avorion Stubs/` instead; the content is the same, just organized as 234 per-class files rather than one giant one.
+
+> [!TIP]
+> **Both sources above are mirrored directly in this repository** — `Avorion Stubs/` and `Avorion API Indexes Documentation/` sit alongside `Codex Main/` at the repo root, so every `Avorion Stubs/<ClassName>.lua` and `search_html_api` reference throughout this guide can be opened locally without hunting them down elsewhere:
+>
+> - **`Avorion Stubs/`** — sourced from the community-maintained [riandrake/AvorionModTools](https://github.com/riandrake/AvorionModTools) project, which generates these per-class Lua stubs from Avorion's own API. Full credit to that project for the tooling; this repo just keeps a working copy so readers of this Codex don't have to set it up separately.
+> - **`Avorion API Indexes Documentation/`** — the raw HTML API docs, shipped internally with the base game for modders' own reference. Included here for the same reason: so a claim in this Codex can be double-checked in two clicks instead of a scavenger hunt through your own game files.
+>
+> If either source ever falls out of date with a newer Avorion release, the upstream tool/game files are still the ground truth — treat the local copies here as a convenience mirror, not a replacement for regenerating them yourself if you suspect drift.
 
 ### What's genuinely locked behind C++ (can't be modded around)
 

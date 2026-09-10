@@ -14,10 +14,12 @@ Thanks for wanting to add to this. The Codex only stays useful if every entry in
 
 A new entry (or a correction to an existing one) should be **verifiable**, in one of these ways:
 
-1. **Checked against `Avorion Stubs`** — the per-class Lua API reference converted from the game's own HTML docs. If a property/method genuinely exists (or doesn't), this is how you prove it.
-2. **Checked against the raw HTML API docs** — the ground-truth source the stubs were generated from. Useful when a stub lookup comes back empty, since the stub conversion has occasionally dropped a real property.
-3. **Checked against vanilla script source** — proof by actual, shipping usage. If a vanilla file does something a certain way on every dedicated server that's ever run the game, that's strong evidence.
+1. **Checked against `Avorion Stubs`** — the per-class Lua API reference converted from the game's own HTML docs. If a property/method genuinely exists (or doesn't), this is how you prove it. A copy lives right in this repo at [`Avorion Stubs/`](Avorion%20Stubs/) (mirrored from [riandrake/AvorionModTools](https://github.com/riandrake/AvorionModTools)) — no separate setup needed.
+2. **Checked against the raw HTML API docs** — the ground-truth source the stubs were generated from. Useful when a stub lookup comes back empty, since the stub conversion has occasionally dropped a real property. Also mirrored here, at [`Avorion API Indexes Documentation/`](Avorion%20API%20Indexes%20Documentation/).
+3. **Checked against vanilla script source** — proof by actual, shipping usage. If a vanilla file does something a certain way on every dedicated server that's ever run the game, that's strong evidence. (Not bundled in this repo — pull it from your own game install.)
 4. **A confirmed, reproducible bug or crash** — something you hit in your own mod, with the actual error message and enough context (file, function, call shape) for someone else to recognize the same failure if they hit it.
+
+> If you suspect either mirrored source (`Avorion Stubs/` or the HTML docs) has drifted out of date against a newer Avorion release, say so in your PR — regenerating them is out of scope for a typical Codex contribution, but flagging it helps a maintainer catch it.
 
 **If you can't independently confirm something** — a claim from memory, something you read elsewhere, a pattern that *seems* to work but you haven't stress-tested — that's still worth submitting, but mark it clearly:
 
