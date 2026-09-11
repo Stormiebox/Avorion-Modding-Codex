@@ -489,6 +489,47 @@ end
 
 A script that only overrides `onRemove()` for this purpose will work fine in manual testing (removing the script, or even scrapping via a UI action that happens to detach the script first) but silently never fire for the much more common real-world case — the entity being destroyed outright (combat loss, demolished, etc.) — leaving a permanent stale/"ghost" entry in whatever it was supposed to clean up. Confirmed as a live bug in Cosmic Overhaul's `entity/merchants/factory.lua`: its Factory Overview registry unregister call was wired to `onRemove()` only, so a factory destroyed in combat never left the tracked-factories list, showing frozen last-known data forever. If you're not certain live `Entity()`/`Faction()` context is still safe to read this late in the lifecycle (jumprangeboost.lua's use of a pre-cached `.entityId` rather than a fresh `Entity()` call is a hint that it might not always be), cache the identity you'll need earlier (e.g. during your normal periodic update) and fall back to it in `onDelete()` rather than trusting a fresh lookup unconditionally.
 
+> [!NOTE]
+> **Correction:** this entry previously stopped at "hook `onDelete()`, not `onRemove()`," and offered `jumprangeboost.lua` as the vanilla precedent for doing so. That's incomplete in a way that will bite you on a dedicated server. Read on.
+
+#### `onDelete()` also fires on a routine sector unload — it does **not** mean "destroyed"
+
+Re-read the doc text above: *"also called when the object it is attached to is deleted."* Deletion is not destruction. When the server saves a sector and drops it from memory — which happens constantly, to every sector with no player in it — every entity in that sector is deleted, and every one of their scripts gets `onDelete()`. Nobody blew anything up.
+
+Two consequences, and the second is the nastier one:
+
+1. **`Sector()` is already gone by then.** Confirmed by a live server log: the crash landed between `create save work for sector (163:312)` and `sector (163:312) saved`, with `attempt to index local 'sector' (a nil value)` on the handler's very first `Sector()` use.
+2. **Any world mutation in there runs on every unload.** Broadcasts, news/announcement publishes, stripping a flag off a faction, restoring state on other entities — all of it fires repeatedly, for a thing that never happened. The crash in (1) is actually the *merciful* failure mode, because aborting on line one stops the rest of the handler from doing damage.
+
+Check what vanilla actually does before copying the pattern: every `onDelete()` in the shipping scripts is client-side or purely local teardown — `gate.lua` and `wormhole.lua` terminate a sound source, and `jumprangeboost.lua`'s is wrapped in `if onClient() then`. None of them mutates server-side world state. That's not a coincidence.
+
+If what you mean is "this entity was destroyed," register the callback that says so:
+
+```lua
+-- WRONG: fires on every sector unload too, and Sector() is nil by then
+function onDelete()
+    local sector = Sector()
+    for _, e in pairs({sector:getEntitiesByType(EntityType.Station)}) do ... end
+    sector:broadcastChatMessage("Server", ChatMessageType.Warning, "It's destroyed!")
+end
+
+-- CORRECT: onDestroyed only fires on real destruction, and the sector is still loaded
+function initialize()
+    if onServer() then
+        Entity():registerCallback("onDestroyed", "onDestroyed")
+    end
+end
+
+function onDestroyed(index, lastDamageInflictor)
+    local sector = Sector() -- safe here
+    ...
+end
+```
+
+Vanilla registers it exactly this way inside an `onServer()` guard in `entity/enemies/worldboss.lua` and `entity/events/asteroidshieldboss.lua`, and both handlers then call `Sector()` freely — proof the sector context is still live at that point.
+
+So the split is three ways, not two: `onRemove()` = the script was detached; `onDestroyed()` = the object was destroyed; `onDelete()` = the object is going away *for any reason at all*, including being saved to disk. Use `onDelete()` for local, in-memory cleanup that should happen whenever this script instance stops existing (that sound source), and `onDestroyed()` for anything that reacts to the entity actually dying. If you genuinely need a registry cleanup that survives both, do it in `onDestroyed()` and treat `onDelete()` as unload-safe only.
+
 ### `entity.damageMultiplier` is real, but doesn't reliably move the needle on DPS
 
 > [!NOTE]
@@ -746,6 +787,36 @@ Every vanilla entity script that registers an interaction does it this way — `
 > [!WARNING]
 > **Confirmed real case.** `Cosmic War`'s v4.0.0 pass shipped this exact mistake in two new files, `cw_checkpoint_picket.lua` and `cw_defector_ship.lua` — both copy-pasted the same wrong shape into `initialize()`. Caught by the `cw_checkpoint_picket.lua` crash showing up in a live server log during playtesting; a same-pattern grep across the whole mod (and the rest of the Cosmic suite) then found the second instance in `cw_defector_ship.lua` before it ever shipped. Both fixed by moving the `ScriptUI():registerInteraction()` call into a new `initUI()` function.
 
+### `ScriptUI:showDialog()` after a server round trip can silently show nothing
+
+`ScriptUI:showDialog(dialog, closeable)` is documented as displaying a dialog "provided that the player is currently in interaction state with the entity" — a real precondition, not just a description of the common case. That state is reliably still active when a dialog is shown synchronously, in the same tick as the player's own interaction click (vanilla's `resistanceoutpost.lua` does exactly this: `onWhoAreYou(entityId)` calls `ScriptUI(entityId):showDialog(makeIntroDialog())` directly). It is **not** reliably still active once the click has round-tripped through the server first — `onClient()` guard → `invokeServerFunction` → server computes something → `invokeClientFunction` back to a client-side `showXDialog()` handler → *then* `ScriptUI():showDialog(...)`. By the time that reply lands, the player's interaction session with the entity may have already ended, and `showDialog()` then does nothing at all — no error, no log line, just silence. The one client-side symptom that does fire is the native interaction-menu click sound, since that's queued by the click itself, before the round trip even starts — so the bug reads as "I clicked it, heard the UI sound, and nothing else happened."
+
+`ScriptUI:interactShowDialog(dialog, closeable)` is the round-trip-safe sibling: documented as "forces the player to interact" rather than requiring the interaction state to already hold. Vanilla's own `antismuggle.lua` confirms the convention directly — every one of its five dialogs shown after a client→server→client round trip (`onScrambleSuccessful`, `onBribeSuccessful`, `onBribeFailed`, `makeBribingDialog`, `startTalk`) calls `interactShowDialog()`, and none of them call plain `showDialog()`.
+
+```lua
+-- WRONG: shows nothing if the interaction-state window has already closed by the
+-- time this reply lands, with no error and no way to tell from the caller's side
+function TradingPost.showWarbondDialog(showBuy)
+    if showBuy then
+        ScriptUI():showDialog(TradingPost.makeBuyDialog())
+    end
+end
+
+-- CORRECT: forces the interaction state instead of assuming it's still open
+function TradingPost.showWarbondDialog(showBuy)
+    if showBuy then
+        ScriptUI():interactShowDialog(TradingPost.makeBuyDialog())
+    end
+end
+```
+
+> [!WARNING]
+> **Confirmed real case.** `Cosmic War`'s Trading Post added four "instant transaction" interactions (Purchase Warbonds, Cash Out Warbonds Early, Broker Sanctions Relief, Send Diplomatic Aid Package), all following the server-round-trip shape above, all calling plain `showDialog()`. Reported specifically against two of the four (a UI click sound, then nothing) — but all four shared the identical defect; the other two were simply not separately reported, most likely because how long the interaction-state window survives a round trip isn't fixed. Fixed by switching all four to `interactShowDialog()`.
+>
+> **The sibling sweep for this one needed to look past the reported file.** A follow-up review, done specifically to check the fix before shipping, found the identical defect in the same mod's `militaryoutpost.lua` — two more interactions ("Enlist as Mercenary," "Request Emergency Repairs") built on the exact same round-trip shape, also calling plain `showDialog()`, never reported at all. The original fix's own sibling check only confirmed no *other mod* shared the fixed file's exact path — it never grepped the rest of the same mod for the same call shape in a *different* file. When a defect's signature is "an API call in a particular shape," the sweep has to search by shape across the whole codebase, not by filename across sibling mods.
+
+**The rule of thumb:** if a dialog is the direct, synchronous result of the player's own click, `showDialog()` is fine. If anything — a server computation, a deferred callback, an async round trip of any kind — sits between the click and the dialog being shown, use `interactShowDialog()` instead.
+
 ### `Player():getValue()` / `setValue()` are server-only — never call them from the client
 
 These are server-side, `Faction`-inherited API methods. Calling `Player()` from a UI script's `initialize()` on the client returns an invalid C++ userdata handle, and any method call on it crashes with `obj->valid() check failed`. The correct architecture to sync server-held config or state down to a UI is a three-layer pattern:
@@ -753,6 +824,9 @@ These are server-side, `Faction`-inherited API methods. Calling `Player()` from 
 1. **Server stores values** via `Server():setValue("mymod_key", value)` — persists across reloads.
 2. **Client requests on load** via `invokeServerFunction("requestSync", keys)`; the server reads `Server():getValue()` and replies via `invokeClientFunction(player, "receiveSync", dataTable)`.
 3. **Client caches the payload** in a module-local Lua table. All subsequent reads go through this cache, falling back to schema defaults while the async round-trip is in flight.
+
+> [!WARNING]
+> **Confirmed real case, a genuine crash rather than a silent no-op.** `Cosmic War`'s `militaryoutpost.lua` registered "Enlist as Mercenary" as a `ScriptUI():registerInteraction()` interaction — which, like every other interaction entry point in this mod, executes client-side unless the handler itself starts a round trip. Its handler called `player:getValue("cw_mercenary_faction")` directly, with no `onClient()`/`onServer()` guard anywhere in the function, to decide which of two dialogs to show a player who'd already enlisted somewhere. Any player in that state crashed the instant they clicked the interaction a second time, at any Military Outpost. Fixed by moving the whole check into the existing server-side round trip that already handled this interaction's other branch (a War Heat check), so the client-side handler now does nothing but kick off `invokeServerFunction` — matching every other interaction entry point in the same file.
 
 ```lua
 -- library.lua — client-side cache pattern
@@ -1791,6 +1865,7 @@ A couple of tips from the same source restate lessons this Codex already documen
 | Ending a script from inside itself | Self-`removeScript()` + `terminate()`, or self-`removeScript()` alone | `terminate()` alone — it already removes the calling script |
 | Unknown C++ properties | `entity.numFactions` | Use a real method, verify against the stub first |
 | Registering a `ScriptUI` interaction | `ScriptUI():registerInteraction(...)` inside `initialize()` | Move it to its own `initUI()` — a separate, engine-invoked lifecycle callback |
+| Showing a dialog after a server round trip | `ScriptUI():showDialog(dialog)` from a client handler invoked via `invokeClientFunction` | `ScriptUI():interactShowDialog(dialog)` — forces the interaction state instead of assuming it |
 | Skipped positional arguments | `createWreckage(faction, matrix)` | `createWreckage(faction, nil, 10, matrix)` |
 | Paying an AI faction | `faction:pay("text"%_T, amount)` | `faction:payWithoutNotify("text", amount)` |
 | Holding userdata across a yield | `local ship = Entity(sid)` before `Yield()` | Store `id.string`, re-fetch after resuming |
@@ -1815,6 +1890,7 @@ A couple of tips from the same source restate lessons this Codex already documen
 | `Error constructing NamedFormat: not enough arguments` | `NamedFormat("Trade Rumor..."%_T)` | `NamedFormat("Trade Rumor..."%_T, {})` — the table argument is required, even when empty |
 | "This craft has no owner" / docking always denied | `entity.factionIndex = 0` on a ship players must dock/enter | Keep real faction ownership; fix the actual side effect at its source (e.g. remove the offending script) |
 | Registry never cleans up a destroyed entity's entry | Cleanup logic hooked to `onRemove()` | Hook `onDelete()` — it's the one that fires when the object itself is deleted |
+| `attempt to index local 'sector' (a nil value)` in `onDelete()`, logged during a sector save | `onDelete()` also fires on routine sector unload, when `Sector()` is already gone | Register `Entity():registerCallback("onDestroyed", ...)` and do destruction work there instead |
 | Split-tab shop's externally-forced special offer never shows up | Emptying `Shop`'s `initUI()` without checking for outside `invokeFunction("<name>", "setSpecialOffer", ...)` callers | Grep the whole workspace for external callers of the namespace by name before removing its UI |
 | "Unregistered items default to category X" claim | Verifying only the single-lookup `getCategory(key)` fallback | Check whether the real consumer instead calls a reverse enumerator (`getScriptsOfCategory`) — it can't surface unregistered keys at all |
 | Shared function only defined inside `if onServer()` | Calling it unconditionally from a script whose `initialize()` also runs client-side | Either guard the call site, or have the library guard the function's own body instead of omitting it entirely |
