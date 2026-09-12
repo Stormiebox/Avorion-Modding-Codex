@@ -870,7 +870,28 @@ Custom values (`Server():setValue()`/`getValue()`, and the entity/faction/player
 
 Confirmed in Cosmic Vault's `cosmicvaultterritory.lua`: `CosmicVaultTerritory.getContestedZones()` runs a full `string.split` + per-entry parse over its serialized zone list on every call, with no module-local cache and no dirty-tracking — and Cosmic War's `cw_battlefieldhud.lua` calls it once per player on every single `onSectorEntered`, plus once more on client `initialize()`. On a server with several concurrent contested zones and players jumping frequently, that's a full re-parse triggered by routine sector travel, not by the data changing.
 
-> **Rule:** if a getter deserializes a custom-value string, and anything calls that getter more often than the underlying value actually changes (a UI refresh, a per-player-per-event hook, anything on a `getUpdateInterval` tick), keep a module-local Lua table as the real cache and only re-run the parse when the setter actually writes a new string — or better, have the setter update the module-local cache directly and skip the round-trip through the string entirely for reads that happen in the same VM. Reserve the string exists purely for what genuinely needs to survive a save/reload or cross a VM boundary; nothing else should ever pay the parse cost.
+> [!NOTE]
+> **Correction:** An earlier revision recommended a module-local table as the general server-side cache for any serialized custom value. That is only safe when one VM is the sole writer, or when the cache is read-only and allowed to be stale. Avorion's separate script VMs each receive their own copy of a library's locals. If two entity/player/sector scripts both cache, modify, and rewrite the same `Server()` record, the later writer can serialize its stale copy and erase the first writer's newer fields. This was reproduced with two already-loaded library instances writing different entries to one JSON-backed queue and market-event record. Both records lost the first write until the mutators were changed to read the authoritative custom value immediately before every write.
+
+```lua
+-- WRONG: every script VM has a different copy of this table
+local cache = decode(Server():getValue("shared_registry") or "{}")
+function addEntry(id, entry)
+    cache[id] = entry
+    Server():setValue("shared_registry", encode(cache)) -- can erase another VM's write
+end
+```
+
+```lua
+-- CORRECT: re-read at the mutation boundary, or route all writes through one owner script
+function addEntry(id, entry)
+    local current = decode(Server():getValue("shared_registry") or "{}")
+    current[id] = entry
+    Server():setValue("shared_registry", encode(current))
+end
+```
+
+> **Rule:** cache decoded custom values only inside a VM that is the record's sole writer. For a record mutated by several script VMs, route writes through one owner script or re-read the durable value at every mutation boundary. Read-only caches are fine when bounded staleness is acceptable. The persisted string exists for save/reload and cross-VM authority; a file-local table is never a shared lock or shared memory.
 
 ### A `double`-typed engine property serialized into a delimited string breaks an integer-only parse pattern
 
