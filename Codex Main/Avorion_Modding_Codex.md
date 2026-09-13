@@ -1917,6 +1917,7 @@ A couple of tips from the same source restate lessons this Codex already documen
 | Shared function only defined inside `if onServer()` | Calling it unconditionally from a script whose `initialize()` also runs client-side | Either guard the call site, or have the library guard the function's own body instead of omitting it entirely |
 | `Player()`-targeted push API called from the client | `if onClient() then MyLib.ShowThing(Player(), ...) end` inside a `broadcastInvokeClientFunction` handler | Call the server-only helper from the server, looping over target players — let its own `invokeFunction` do the pushing |
 | Mission abandon penalty silently never fires | `mission.abandon = function() ... end` | `mission.globalPhase.onAbandon = function() ... end` — `structuredmission.lua` never reads `mission.abandon` |
+| API search returns no per-class stub result | Assuming the function doesn't exist | Search raw `Functions.html` too — global Lua functions are not members of a class stub |
 
 ---
 
@@ -1933,6 +1934,14 @@ A couple of tips from the same source restate lessons this Codex already documen
 > - **`Avorion API Indexes Documentation/`** — the raw HTML API docs, shipped internally with the base game for modders' own reference. Included here for the same reason: so a claim in this Codex can be double-checked in two clicks instead of a scavenger hunt through your own game files.
 >
 > If either source ever falls out of date with a newer Avorion release, the upstream tool/game files are still the ground truth — treat the local copies here as a convenience mirror, not a replacement for regenerating them yourself if you suspect drift.
+
+### An empty class-stub search does not disprove a global function
+
+The per-class stubs answer questions about objects such as `Sector`, `Entity`, and `Player`. They do not contain every global Lua function. When a class-stub search returns nothing, I search the raw `Functions.html` index before I conclude that the API does not exist, then check vanilla source for a real call site.
+
+`addSectorProblem(type, text, icon, color, withHighlight)` and `removeSectorProblem(type)` are a concrete example. Neither appears in the class stubs. Both are documented as global functions in `Functions.html`, and vanilla's Rift environmental effect calls them to maintain the sector-problem display.
+
+> **Rule:** Treat an empty per-class stub result as a reason to search the raw global-function docs, not as proof that a function is invented. A raw-doc match plus a shipping vanilla call site is strong evidence even when no class owns the function.
 
 ### What's genuinely locked behind C++ (can't be modded around)
 
