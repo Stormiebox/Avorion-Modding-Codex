@@ -893,6 +893,41 @@ end
 
 > **Rule:** cache decoded custom values only inside a VM that is the record's sole writer. For a record mutated by several script VMs, route writes through one owner script or re-read the durable value at every mutation boundary. Read-only caches are fine when bounded staleness is acceptable. The persisted string exists for save/reload and cross-VM authority; a file-local table is never a shared lock or shared memory.
 
+### A shared provider should invalidate generically, not invoke a consumer's script path
+
+When one mod owns a shared registry or event feed, it is tempting to notify the UI by calling that UI's exact script path. That reverses the dependency: the provider can no longer run alone, a renamed or absent consumer becomes a runtime failure, and a second consumer cannot subscribe without editing the provider.
+
+`Server:sendCallback(name, ...)` is documented in `Server.lua`, and `Galaxy:invokeFunction(path, functionName, ...)` provides a synchronous server-side read boundary with an explicit status result. Together they support a cleaner split: the provider emits a small generic invalidation callback after its durable write, and each consumer queries the provider from its own owner script after the callback stack returns.
+
+```lua
+-- WRONG: the shared provider knows one optional consumer's private file path
+player:invokeFunction("data/scripts/player/ui/specific_news_board.lua",
+    "receiveArticle", article)
+```
+
+```lua
+-- CORRECT: publish identity/revision only; consumers pull validated snapshots
+Server():sendCallback("onSharedFeedChanged", feedRevision, articleId, "updated")
+
+function Consumer.onSharedFeedChanged(feedRevision, articleId, changeType)
+    pendingArticleIds[articleId] = true -- query from updateServer(), outside this stack
+end
+
+function Consumer.updateServer(timeStep)
+    for articleId in pairs(pendingArticleIds) do
+        pendingArticleIds[articleId] = nil
+        local status, article = Galaxy():invokeFunction(
+            "data/scripts/server/shared_feed_owner.lua", "getArticle", articleId)
+        if status == 0 and article then consume(article) end
+        break -- keep callback follow-up work bounded
+    end
+end
+```
+
+The callback should carry only enough data to identify the change. Sending the full mutable record creates two authorities and bypasses audience, revision, and validation checks that belong in the provider. Queueing follow-up work also avoids re-entering another script owner while the provider is still committing its own state.
+
+> **Rule:** shared providers publish generic invalidation events and expose result-bearing read APIs. Optional consumers own their paths, caches, UI, and retry behavior; providers never call into a consumer-specific script.
+
 ### A `double`-typed engine property serialized into a delimited string breaks an integer-only parse pattern
 
 Building the same hand-rolled serializer the entry above describes, a value pulled straight from a `double`-typed engine property (`Server().unpausedRuntime`, any `getRelations()`/War-Heat-style float) and passed through `tostring()` does **not** reliably render as a clean, `%d+`-parseable integer — Lua's default number-to-string conversion picks whichever form is shortest/most natural for the actual value, and that form depends on magnitude, not on what the value conceptually represents:
