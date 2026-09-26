@@ -289,6 +289,31 @@ This is only safe when `SomeNamespace.initialize` was already assigned by code t
 > [!WARNING]
 > **If you are the *sole* author of that function in this codebase** — a mod's own from-scratch namespace built via a factory call like `ShopAPI.CreateNamespace()`, with no vanilla or other-mod file sharing that exact path — there is nothing earlier in the chunk to capture. Replacing your own `function SomeNamespace.initialize() ... end` with the capture-and-wrap pattern, *in the same file, at the same position*, captures `nil` (the field was never set before that line runs), and calling it later throws `attempt to call a nil value`. Caught during a Cosmic Overhaul equipment-dock/turret-merchant split before it shipped: the fix was to just rewrite the function body directly — keep the original logic, add the new logic, no capture needed, since being the sole author means there's no earlier version to preserve in the first place. Reach for this pattern only when actually extending something defined earlier in the chain; if you wrote the whole function yourself, edit it in place.
 
+### A wrapper must return everything the original returns — a truncated return list breaks callers you never grep
+
+When you wrap a vanilla function with the capture-and-wrap pattern above, the wrapper's `return` is the function's whole public contract, not just the value you care about. Lua doesn't complain when a caller destructures five values and your wrapper returns two; the missing ones simply arrive as `nil`.
+
+`TradingManager:getBuyPrice` and `getSellPrice` are a real example. Vanilla returns `price, basePrice, supplyDemandFactor, relationFactor, priceFactor`, and almost every caller reads only the first, so a wrapper that returns `price, something` looks fine in the buy/sell UI. The exception is the factory config panel (`Factory.refreshConfigUI` in `entity/merchants/factory.lua`): it reads the last three, jumps to a `::continue::` label when `supplyDemandFactor == nil`, and that label sits *after* its row counter `i = i + 1`. Every ingredient then lands in the first label row and the next one overwrites it, so only the last ingredient of a recipe stays visible — a Transformator Factory showed just its optional Energy Cell — and the panel's "Profit / production" sum never accumulated.
+
+```lua
+-- WRONG: guessed the return shape from a different API (Shop's price, tax); drops values 3-5
+local original_getBuyPrice = TradingManager.getBuyPrice
+function TradingManager:getBuyPrice(goodName, amount, faction, buyer)
+    local price, tax = original_getBuyPrice(self, goodName, amount, faction, buyer)
+    return price, tax
+end
+
+-- CORRECT: copy the original's real signature and pass its whole return list on
+function TradingManager:getBuyPrice(goodName, sellingFactionIndex)
+    local price, basePrice, supplyDemandFactor, relationFactor, priceFactor =
+        original_getBuyPrice(self, goodName, sellingFactionIndex)
+    -- adjust price (and basePrice, so the two stay consistent) here
+    return price, basePrice, supplyDemandFactor, relationFactor, priceFactor
+end
+```
+
+> **Rule:** before wrapping a vanilla function, open its definition and grep the vanilla scripts for its callers, then copy its real parameter list and its full return list. Don't borrow the shape of a similarly named function on another class — `Shop:getBuyPrice(price, faction, buyer)` and `TradingManager:getBuyPrice(goodName, sellingFactionIndex)` are unrelated signatures.
+
 ### Before deleting "dead" code from an override file, first tell the two file shapes apart
 
 A mod folder full of vanilla-path overrides is not one uniform thing — it's (at least) two structurally different shapes, and they call for opposite levels of caution when you're cleaning up code that looks unused:
@@ -419,7 +444,7 @@ Upgrade module scripts (`data/scripts/systems/*.lua`) are the one exception — 
 
 ### `entity:removeScriptBonuses()` clears every script's bonuses on the entity, not just the calling script's own
 
-The official doc comment (`Avorion Stubs/Entity.lua`) reads "Deletes all bonuses added by the current script," which reads as scoped to whichever script instance calls it. In practice, on a ship carrying bonuses from multiple different scripts (a temporary buff script, a subsystem's own passive bonus, another mod's aura), calling this from any ONE of them wipes the others' bonuses too — confirmed independently in this workspace across Cosmic Ascendancy's `ascendantaegis.lua` (Aegis Reactor's 15-second refresh cycle was erasing Cosmic Overhaul's Captain Elite Trait buffs and Cosmic Starfall's Bastion System buffs on the same ship), Cosmic Vault's `cosmicbuff.lua` (a Commodore's paired Shield + FireRate buffs — two separate script instances stacked via `entity:addScript()` — silently erasing each other the instant the second one applied), and Cosmic Starfall's `starfall_setbonuses.lua` (its doctrine/set-bonus recalculation, which fires on every turret change and every reload, was wiping every individually-installed subsystem's own base passive bonuses).
+The official doc comment (`Avorion Stubs/Entity.lua`) reads "Deletes all bonuses added by the current script," which reads as scoped to whichever script instance calls it. In practice, on a ship carrying bonuses from multiple different scripts (a temporary buff script, a subsystem's own passive bonus, another mod's aura), calling this from any ONE of them wipes the others' bonuses too — confirmed independently in this workspace across Cosmic Ascendancy's `ascendantaegis.lua` (Aegis Reactor's 15-second refresh cycle was erasing Cosmic Overhaul's Captain Elite Trait buffs and Cosmic Starfall's Bastion System buffs on the same ship), Cosmic Vault's `cosmicbuff.lua` (a Commodore's paired Shield + FireRate buffs — two separate script instances stacked via `entity:addScript()` — silently erasing each other the instant the second one applied), and Cosmic Starfall's `starfall_setbonuses.lua` (its doctrine/set-bonus recalculation, which fires on every turret change and every reload, was wiping every individually-installed subsystem's own base passive bonuses). A second Starfall script, `entity/mainCaliber.lua`, hid the same trap behind a client-triggered RPC: every client that loaded a ship sent a "no penalty" request, and the server's handler answered it with `removeScriptBonuses()`, so every subsystem's install-time bonuses were erased on each sector load, login and turret change. The same call inside an upgrade module's `onUninstalled` is pointless as well as harmful — the engine already strips a module's own bonuses on uninstall (vanilla's systems leave `onUninstalled` empty), so the only thing the call can remove is other scripts' bonuses.
 
 > [!WARNING]
 > **Rule:** never call `entity:removeScriptBonuses()` from a script if the entity might also be carrying bonuses added by *any other* script — which, on a player/alliance ship in a suite with multiple concurrently-stackable buff/subsystem/aura systems, is close to always. Track your own bonus key(s) (the "Removing a stat bonus" pattern above) and call `entity:removeBonus(key)` for exactly the bonus you added instead. Reserve `removeScriptBonuses()` for a script you've confirmed is the *only* thing that ever adds bonuses to that specific entity (vanilla's own `captainshipbonuses.lua` is one such case — it's the sole owner of captain-derived bonuses on a ship).
@@ -820,9 +845,40 @@ end
 
 **The rule of thumb:** if a dialog is the direct, synchronous result of the player's own click, `showDialog()` is fine. If anything — a server computation, a deferred callback, an async round trip of any kind — sits between the click and the dialog being shown, use `interactShowDialog()` instead.
 
+### `Player()` with no argument only resolves in a player script or on the client
+
+The raw HTML docs list two different constructors: `Player [Server]` documents `Player(index)`, and `Player [Client]` documents `Player()`. Inside a script attached to a Player (`data/scripts/player/**`) the no-argument form is that player, on either side — vanilla's `player/init.lua` calls `Player()` on the server — and on the client it is the local player. A server-side entity, sector or galaxy script has no such player to resolve. There, use `Player(callingPlayer)` inside an RPC, `Entity():getPilotIndices()` for the people flying a ship, or register the hook on the entity itself.
+
+Vanilla follows this: every `Player():registerCallback(...)` in its entity and subsystem scripts sits behind `onClient()` (`systems/miningsystem.lua`, `entity/beacon.lua`), and its entity-level hook is `entity:registerCallback("onSectorEntered", ...)` (`entity/utility/captainshipbonuses.lua`). Mind the handler signature: the entity callback is `(entityId, x, y)`, the player callback is `(playerIndex, x, y, sectorChangeType)` — a handler written for one and registered on the other silently receives the wrong arguments.
+
+```lua
+-- WRONG: server-side, inside a subsystem (entity) script — the docs list no no-argument form there
+function onInstalled(seed, rarity, permanent)
+    if onServer() then Player():registerCallback("onSectorEntered", "onSectorEntered") end
+end
+
+-- CORRECT: hook the entity, and find the player from the ship
+function onInstalled(seed, rarity, permanent)
+    if onServer() then Entity():registerCallback("onSectorEntered", "onSectorEntered") end
+end
+function onSectorEntered(entityId, x, y)
+    for _, index in pairs({Entity():getPilotIndices()}) do
+        local pilot = Player(index)
+        -- ...
+    end
+end
+```
+
+> ⚠️ **Unverified:** What a server-side entity script actually receives from a no-argument `Player()`. The docs list no such form and vanilla never does it, so treat it as unsupported rather than assuming it returns `nil`. A log line printing `valid(Player())` from a subsystem's `onInstalled()` would settle it.
+
 ### `Player():getValue()` / `setValue()` are server-only — never call them from the client
 
-These are server-side, `Faction`-inherited API methods. Calling `Player()` from a UI script's `initialize()` on the client returns an invalid C++ userdata handle, and any method call on it crashes with `obj->valid() check failed`. The correct architecture to sync server-held config or state down to a UI is a three-layer pattern:
+These are server-side, `Faction`-inherited API methods. Calling `Player()` from a UI script's `initialize()` on the client returns an invalid C++ userdata handle, and any method call on it crashes with `obj->valid() check failed`. > [!NOTE]
+> **Correction:** The heading overstates this. The raw HTML docs list `getValue(string name)` on `Player [Client]` (and only `Player [Server]` lists `setValue`), and vanilla's own client UI reads Player values directly — `player/ui/encyclopedia/chapters/exploring.lua` calls `Player():getValue("encyclopedia_adventurer_met")` inside an `isUnlocked` callback. So a **read** with a valid handle is fine on the client; **writes** stay server-only, and anything a client must be able to trust should still be computed on the server. The crash described below is real, but its cause is an invalid handle (see the next paragraph), not the read itself.
+>
+> ⚠️ **Unverified:** Exactly which condition made `Cosmic War`'s `militaryoutpost.lua` hand `getValue` an invalid handle. What would settle it: log `valid(player)` at the top of that handler.
+
+The correct architecture to sync server-held config or state down to a UI is a three-layer pattern:
 
 1. **Server stores values** via `Server():setValue("mymod_key", value)` — persists across reloads.
 2. **Client requests on load** via `invokeServerFunction("requestSync", keys)`; the server reads `Server():getValue()` and replies via `invokeClientFunction(player, "receiveSync", dataTable)`.
@@ -1748,6 +1804,39 @@ function MyTracker.restore(data)
 end
 ```
 
+### A reloaded script's `initialize()` runs again — with none of its original arguments
+
+`secure()`/`restore()` is only half of what happens when a sector or the server reloads a script that was attached earlier. The engine also calls that script's `initialize()` again, with **no arguments** and with the global `_restoring` set to `true`, and only then hands `restore(data)` whatever `secure()` last returned. Vanilla says as much in the header of `entity/init.lua` ("...treated as if loaded from database, with the _restoring variable set in its initialize() function"), and about thirty vanilla scripts branch on `_restoring` (`grep -rl _restoring data/scripts`). Vanilla's `TemporaryInvincibility` shows the whole pattern in one small file: `initialize(invincibilityTimer, invincibilityValue, ...)` registers its callbacks every time, takes the argument-derived `data.percentage` only `if not _restoring`, and `restore(data_in)` re-applies the saved state.
+
+Three things follow from that:
+
+1. **Every `addScriptOnce(path, a, b, c)` argument is `nil` on reload.** If the script still needs `a`, `b` or `c` later, save it in `secure()` and put it back in `restore()`.
+2. **Anything `initialize()` should do once needs `if not _restoring`.** Spawning ships, broadcasting a message, applying a persisted entity property — all of it repeats on every reload otherwise. Vanilla's `AIPatrol.initialize` guards its `setPassive()` call this way.
+3. **Whatever the engine doesn't persist has to be redone on every load.** Event callbacks registered with `registerCallback` and pending `deferredCallback` timers are not saved, so register the callbacks outside the `_restoring` guard (as `TemporaryInvincibility` does) and re-arm timers in `restore()` (as `DelayedDelete.restore` does).
+
+```lua
+-- WRONG: a reload runs this again with no arguments. It spawns a second set of pylons that
+-- restore() then orphans, and it re-applies a persisted entity property.
+function Boss.initialize()
+    Entity().invincible = true
+    Boss.spawnPylons(4)
+    Entity():registerCallback("onDestroyed", "onDestroyed")
+end
+
+-- CORRECT: one-time work is guarded, callbacks are not.
+function Boss.initialize()
+    if not _restoring then
+        Entity().invincible = true
+        Boss.spawnPylons(4)
+    end
+    Entity():registerCallback("onDestroyed", "onDestroyed")
+end
+```
+
+Confirmed real cases from `Cosmic Ascendancy`, each of which ran clean and simply lost state: an ability script that received four class flags as arguments and saved only one of them, so every ship silently lost its abilities after a reload; a boss script whose `initialize()` spawned four more helper ships per reload; a script that overwrote a value it had stored on the entity with its default (`damageType or DamageType.Physical`) because the argument was `nil` again; and a sector event whose `initialize()` did `if type(arg) ~= "string" then terminate() end` — a sensible-looking argument check that fires on every reload, before `restore()` ever gets its turn.
+
+> ⚠️ **Unverified:** What `terminate()` does when it is called from inside a restoring `initialize()`. Vanilla's `DelayedDelete.initialize` reaches `terminate()` on that path (its `time` argument is `nil` and `_restoring` is set) while its `restore()` re-arms a timer, so both cannot be meant to matter. It is safest to `return` early on `_restoring` instead of relying on either outcome; a test with a script that logs from `initialize()`, `restore()` and `terminate()` would settle it.
+
 ### A shared library's `conditions`-style filter table is a closed set, not an open one
 
 `CosmicVaultDialogue.registerLine(entry)` accepts an `entry.conditions` table meant to gate when a registered line is eligible — but reading `CosmicVaultDialogue.getValidLine()` directly shows it only ever checks a fixed, hardcoded list of keys (`minWarHeat`, `maxWarHeat`, `factionTrait`, `factionWealth`, `stationType`, `minDistanceToCenter`, `maxDistanceToCenter`, `minReputation`, `maxReputation`). Any other key you put in that table — say, `conditions = {eclipseAwake = true}` to gate a line on a mod-specific game-state flag — is silently ignored. The entry evaluates `isValid = true` and stays in the pool unconditionally; there's no error, no warning, just a line that shows up before the condition it was supposedly gated on is even true.
@@ -1946,6 +2035,7 @@ A couple of tips from the same source restate lessons this Codex already documen
 | `attempt to get length of a userdata value` | `local x = sector:getEntitiesByType(t)` | `local x = {sector:getEntitiesByType(t)}` — it returns multiple values, not a table |
 | Unrestricted debug RPC | A `callable()`-registered function gated only by a client-side `if _debug then` wrapper | Add a server-side `Owner()`/`callingPlayer` ownership check inside the function itself |
 | `restore()` silently doesn't restore anything | `local x = ...` inside `restore()`, shadowing a module-scope `local x` other functions read | `x = ...` (no `local`) to update the actual outer variable |
+| A script re-spawns things, loses its arguments, or terminates itself after a sector reload | `initialize(a, b)` that spawns or validates `a`/`b` unconditionally | Guard one-time work with `if not _restoring`, save `a`/`b` in `secure()`, and see "A reloaded script's `initialize()` runs again" |
 | `Error constructing NamedFormat: not enough arguments` | `NamedFormat("Trade Rumor..."%_T)` | `NamedFormat("Trade Rumor..."%_T, {})` — the table argument is required, even when empty |
 | "This craft has no owner" / docking always denied | `entity.factionIndex = 0` on a ship players must dock/enter | Keep real faction ownership; fix the actual side effect at its source (e.g. remove the offending script) |
 | Registry never cleans up a destroyed entity's entry | Cleanup logic hooked to `onRemove()` | Hook `onDelete()` — it's the one that fires when the object itself is deleted |
